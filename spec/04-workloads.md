@@ -47,7 +47,7 @@ Notes:
 
 | Item | Value |
 |---|---|
-| Model (selected) | deepseek-ai DeepSeek-V4.1-Flash (552B total, 8B/16B active, 890 bytes KV per token, compressed attention plus SWA, MTP/DSpark) |
+| Model (selected) | deepseek-ai DeepSeek-V4.1-Flash (552B total, 8B/16B active, 890 bytes KV per token, compressed attention plus SWA, MTP/DSpark, 1M context) |
 | Fallback | zai-org GLM-5.3-Flash (321B MoE, DSA, NVFP4 / FP8 / BF16) |
 | Cross-vendor denominator | openai/gpt-oss-120b (MXFP4, MLPerf Inference v6.0 workload) |
 
@@ -134,9 +134,9 @@ versioned artifacts.
 | PF-3 | Chat distribution | Dataset | Empirical | Empirical, capped at 1 024 | Real chat traffic shape. |
 | PF-4 | Agentic / RAG | Distribution synthetic | Mean 4 096, SD 2 048 | 256 | Long input, short output. Agent and RAG shape. |
 | PF-5 | Decode-heavy | Distribution synthetic | 1 024 | 4 096 | Reasoning and long-output shape. |
-| PF-7 | Production p50 | Session model | 30 000 | 500 | Production lane, median. |
-| PF-8 | Production p90 | Session model | 100 000 | 5 000 | Production lane, high. |
-| PF-9 | Production p99 | Session model | 250 000 | 50 000 | Production lane, extreme. |
+| PF-7 | Production p50 | Session model | 30 000 | 500 | Production lane, median. 30 500 total. |
+| PF-8 | Production p90 | Session model | 100 000 | 5 000 | Production lane, high. 105 000 total. |
+| PF-9 | Production p99 | Session model | 200 000 | 50 000 | Production lane, extreme. 250 000 total. |
 
 Rules:
 1. PF-1 and PF-2 are headline profiles. Every SUT reports them.
@@ -148,11 +148,13 @@ Rules:
    exist. Do not use it in this version.
 6. PF-7 to PF-9 are production lanes. They run in scenario P-C (3.1).
    Report them in separate tables. Never mix them with P-U rows.
-7. A production lane needs a model context window of at least
-   ISL plus OSL. PF-9 needs 300 000 tokens. Check the model limit
-   before the run. Mark the lane N/A if the model falls short.
-   A model that needs a context extension (example: YaRN) runs the
-   lane only with the extension recorded. Flag the row CTX.
+7. Context cap: ISL plus OSL must stay at or below 262 144 tokens
+   (256k). This matches the smallest context window of the selected
+   models: Qwen3.8-27B with 262 144 native. DeepSeek-V4.1-Flash and
+   Kimi K3.1-Pro have a 1M context window. The cap leaves room for
+   the chat template overhead. PF-9 is 200 000 in plus 50 000 out
+   (250 000 total) for this reason. A model with a smaller window
+   (example: gpt-oss-120b at 131k) is N/A for the production lanes.
 8. Request counts for the production lanes replace the 1 000-request
    rule (spec 03.3): PF-7 uses 200 requests, PF-8 uses 100,
    PF-9 uses 30.

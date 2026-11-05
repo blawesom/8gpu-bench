@@ -129,6 +129,8 @@ All documents use the ASD-STE100 standard (Simplified Technical English).
 10. Verify Kimi K3.1 Pro concurrency ceiling per SUT in the pilot
     (published recipes use about 48).
 11. Production lanes (PF-7 to PF-9, from observed traffic):
-    confirm the DeepSeek-V4.1-Flash context window (PF-9 needs
-    300 000 tokens), and select the public text source for the
-    long-prompt corpora (rule 2.2.12).
+    ~~confirm the DeepSeek-V4.1-Flash context window~~ Confirmed:
+    1M (max output 384k). Context cap set to 256k (spec 04.2.1) so
+    every selected model runs every production lane natively.
+    Remaining: select the public text source for the long-prompt
+    corpora (rule 2.2.12).
