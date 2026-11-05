@@ -61,7 +61,7 @@ Native FP4 is a separate hardware-best lane.
 |---|---|---|---|
 | PF-1 | Fixed synthetic | 512 / 128 | Headline. |
 | PF-2 | Fixed synthetic | 8,192 / 1,024 | Headline, long context. |
-| PF-3 | Dataset (LMSYS-Chat-1M) | Empirical | Real chat shape. |
+| PF-3 | Dataset (WildChat-1M) | Empirical | Real chat shape. |
 | PF-4 | Distribution synthetic | 4,096 +/- 2,048 / 256 | Agentic / RAG shape. |
 | PF-5 | Distribution synthetic | 1,024 / 4,096 | Decode-heavy shape. |
 | PF-7 | Session model | 30,000 / 500 | Production p50. |

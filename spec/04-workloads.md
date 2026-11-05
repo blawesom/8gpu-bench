@@ -160,8 +160,12 @@ Rules:
    PF-9 uses 30.
 
 PF-3 data source:
-- Default: LMSYS-Chat-1M, a fixed recorded sample of 2 000 conversations.
-- Fallback: ShareGPT, processed with a pinned script.
+- Default: WildChat-1M (allenai/WildChat-1M, moderation-filtered
+  version). License: ODC-BY. A fixed recorded sample of 2 000
+  conversations.
+- Fallback: LMSYS-Chat-1M. Its license is gated and non-transferable.
+  Use it as recipe only: store the generation script and the seed.
+  Do not commit derived text to the repository.
 - Record the dataset revision, the sample seed, and the sampling rule.
 
 ### 2.2 Corpus rules
@@ -194,8 +198,18 @@ request holds the prompt text, the target ISL, and the target OSL.
 11. The generator computes the expected token-level cache hit of each
     session corpus. Record the value with the corpus. The run validity
     check compares it with the server metric (rule 5.6).
-12. Long prompts need source text. Sample the text from a recorded
-    public text corpus. Record the source, the revision, and the seed.
+12. Source text (selected, November 2026):
+    - Filler text for PF-1 to PF-5: FineWeb (HuggingFaceFW/fineweb),
+      length-filtered sample. License: ODC-BY.
+    - Long session history for PF-7 to PF-9: PG-19 (deepmind/pg19),
+      Project Gutenberg books. The books are public domain. One book
+      gives 30 000 to 200 000 tokens of stable text.
+    - New-turn text for sessions: WildChat-1M user turns. License: ODC-BY.
+    - For each source, record the dataset revision, the sample seed,
+      and the sampling rule.
+13. Attribution: FineWeb and WildChat-1M carry the ODC-BY license.
+    The generator writes the source name, the revision, and the
+    attribution text in the header of each corpus file.
 
 ### 2.3 Token control
 

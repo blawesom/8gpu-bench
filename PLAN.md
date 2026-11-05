@@ -121,19 +121,19 @@ All documents use the ASD-STE100 standard (Simplified Technical English).
 6. Whether LMDeploy and llama.cpp enter the core set after the pilot.
 7. PL-4 lane scope: which SUTs run native FP4 (see spec 04.4).
 8. ~~Payload profile registry~~ Done: PF-1 to PF-5 in spec 04.
-   Decide the PF-3 data source (LMSYS-Chat-1M default, ShareGPT
-   fallback) and confirm the corpus file schema of both harnesses
-   at the version pin.
+   ~~PF-3 data source~~ Decided: WildChat-1M (ODC-BY). LMSYS-Chat-1M
+   is a recipe-only fallback. Confirm the corpus file schema of both
+   harnesses at the version pin.
 9. Verify Qwen3.8-27B on AMD (ROCm) during the pilot. The upstream recipe
    does not list a tested AMD path for the 27B.
 10. Verify Kimi K3.1 Pro concurrency ceiling per SUT in the pilot
     (published recipes use about 48).
-11. Production lanes (PF-7 to PF-9, from observed traffic):
-    ~~confirm the DeepSeek-V4.1-Flash context window~~ Confirmed:
-    1M (max output 384k). Context cap set to 256k (spec 04.2.1) so
-    every selected model runs every production lane natively.
-    Remaining: select the public text source for the long-prompt
-    corpora (rule 2.2.12).
+11. ~~Production lanes (PF-7 to PF-9, from observed traffic)~~
+    Done. DeepSeek-V4.1-Flash context confirmed (1M, max output 384k).
+    Context cap set to 256k (spec 04.2.1). Corpus sources selected
+    (spec 04.2.2): PG-19 for long session history, WildChat-1M for
+    chat distribution and turn text (ODC-BY, LMSYS fallback is
+    recipe-only), FineWeb for filler text.
 12. Infra pins at Phase 2 (infra/ansible): exact driver versions
     per vendor, jointly with the container digests (the driver must
     match what the pinned images expect). Verify the AMD GPU count
