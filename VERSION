@@ -1,0 +1,9 @@
+# Versioned artifacts of 8gpu-bench (spec 07.1).
+# Keep the benchmark spec version and the tool versions separate:
+# a result row records all four, so results from different releases
+# of the benchmark stay comparable (spec 00.3.5).
+benchmark_spec=1.1.0
+runner_version=1.2.0
+assembler_version=1.2.0
+corpus_version=1.0.0
+result_schema_version=1.0.0

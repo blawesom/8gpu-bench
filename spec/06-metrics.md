@@ -112,3 +112,11 @@ M5, M8, M24, M1, M2, M3, M4 (p90), M15, M18.
 The production-lane table carries: M5, M8, M24, M1, M2, M22, M23.
 M10 and M11 (spec 06.4) stay in the full result file only.
 All other metrics live in the full result file.
+
+Statistical reporting: for M5, the headline table and the aggregate
+results report the statistics of the repetition set: the median
+(headline value), p10, p90, the coefficient of variation, and the
+95% bootstrap confidence interval (spec 07.1.2). A performance
+difference smaller than the width of the confidence interval is not
+a demonstrated difference. State it as "no significant difference"
+in the report.

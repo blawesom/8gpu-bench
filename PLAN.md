@@ -45,9 +45,12 @@ A buyer can use the result to compare systems.
 | 6 | huggingface/inference-benchmarker | 176 | Not selected |
 | 7 | NVIDIA genai-perf (perf_analyzer) | 164 | Cross-check tier (not primary) |
 
-Key decision: both primary harnesses are HTTP clients.
-They measure any OpenAI-compatible endpoint the same way.
-Native stack benchmarks (vLLM, SGLang, llama.cpp) are cross-checks only.
+Key decision: one primary harness (GuideLLM), a pure HTTP client.
+It measures any OpenAI-compatible endpoint the same way, so the
+measurement instrument never shifts the comparison.
+GenAI-Perf and the native stack benchmarks (vLLM, SGLang,
+llama.cpp, TensorRT-LLM) are the cross-check tier.
+Their results never enter the headline tables (spec 03.1).
 
 ### 3.3 Model landscape (Nov 2026)
 
@@ -77,7 +80,7 @@ FP8 is the common lane. Native FP4 is a separate hardware-best lane.
 | spec/00-scope-and-definitions.md | Scope, definitions, rules |
 | spec/01-systems-under-test.md | Hardware matrix, entry criteria |
 | spec/02-inference-stacks.md | Stack set, version pinning |
-| spec/03-benchmark-harnesses.md | Dual-harness method |
+| spec/03-benchmark-harnesses.md | Primary harness and cross-check tier |
 | spec/04-workloads.md | Models, token lengths, traffic |
 | spec/05-test-protocol.md | Run procedure, comparability rules |
 | spec/06-metrics.md | Metric definitions, units, SLOs |
@@ -91,7 +94,7 @@ All documents use the ASD-STE100 standard (Simplified Technical English).
 |---|---|---|
 | 0 | Research | Repo tables verified. Done (Nov 2026). |
 | 1 | Specification | This document set is complete and approved. |
-| 2 | Pilot | One system per vendor runs all core tests end-to-end. The corpus generator emits all profile corpora with checksums. The Ansible bring-up passes `verify.yml` on every SUT. |
+| 2 | Pilot | One system per vendor runs all core tests end-to-end. The corpus generator emits all profile corpora with checksums. The Ansible bring-up passes `verify.yml` on every SUT. The runner applies the randomized value order, the thermal soak, and the reference points (spec 05.2). The assembler writes `results.json`, `validation.json`, and the validity levels with confidence intervals (spec 05.7.1, 07.1). |
 | 2a | Hardware pilot | Intel D270 and AMD MI450 support verified. Fail = mark system pilot-phase in results. |
 | 3 | Baseline run | H200 + RTX PRO 6000 + MI300X complete all tests. |
 | 4 | Full campaign | All systems, all core stacks. |
@@ -152,3 +155,23 @@ All documents use the ASD-STE100 standard (Simplified Technical English).
     The queue absorbs it, so the run does not fail: the concurrency
     silently drops. If it does not fit, run Tier 1 at FP8 on SUT-3,
     or cap the TP2 concurrency at 16 on SUT-3 with a DEV flag.
+
+## 8. Roadmap — deferred items (third-party review, Nov 2026)
+
+A third-party review of the specification recommended a set of
+improvements. The items below were deferred to Phase 3 and later.
+They are recorded here so they are not lost. The implemented items
+are in benchmark spec 1.1.0 (see the changelog note in the README).
+
+| Item | Phase | Note |
+|---|---|---|
+| Open-loop lanes at saturation-relative rates (25% to 150% of saturation) | 3 | Requires a two-phase protocol: a closed-loop sweep finds the saturation point first. |
+| Full-node power via BMC/Redfish or a wall meter | 3 | GPU telemetry only for Phase 2. The source is recorded in the environment record (spec 06.6). |
+| Memory-capacity benchmark (max sequences, KV cache, context) | 3 | New test-point type. |
+| Prefill/decode separation as dedicated workloads | 3 | TTFT/TPOT already cover it partially (spec 06). |
+| GPU communication microbenchmarks (GPU-to-GPU, all-reduce) | 3 | Important for TP=8. New test-point type. |
+| Cost-performance section (tokens/s per $, cost per 1M tokens) | 4 | M20/M21 exist. Keep prices out of the raw results. |
+| Interactive result dashboard | 4 | After the first published results. |
+| Extended workloads: prefix cache ON/OFF, chunked prefill, speculative decoding ON/OFF, mixed short/long, multi-tenant, 24 h sustained | 4 | Classify as Core / Extended / Experimental (spec 04). |
+| Multi-node benchmarking (2 and 4 nodes, inter-node bandwidth) | 5 (V2) | Single-node scope stays for V1. |
+| Deeper code review of `tools/` | 2 | Review done in the same pass as the spec 1.1.0 changes. |

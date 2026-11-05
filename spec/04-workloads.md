@@ -31,6 +31,7 @@ Record which features the server activated for each run (see 1.5).
 | Precision | BF16 for all SUTs. PL-4 lane (NVFP4, 24.6 GiB) optional. |
 | Placement | TP=1, one GPU (GPU 0). |
 | Purpose | Per-GPU decode speed, linear-attention kernel quality, memory-bandwidth behavior. |
+| Comparability | STRICT: Qwen3.8-27B. ARCH: Qwen3-8B fallback (rule 1.6). |
 
 Notes:
 - BF16 weights are about 54 GB. This fits one GPU of every SUT,
@@ -59,6 +60,7 @@ Notes:
 | Model (selected) | deepseek-ai DeepSeek-V4.1-Flash (552B total, 8B/16B active, 890 bytes KV per token, compressed attention plus SWA, MTP/DSpark, 1M context) |
 | Fallback | zai-org GLM-5.3-Flash (321B MoE, DSA, NVFP4 / FP8 / BF16) |
 | Anchor (Phase 3) | openai/gpt-oss-120b (MXFP4, MLPerf Inference v6.0 workload) |
+| Comparability | STRICT: DeepSeek-V4.1-Flash. ARCH: GLM-5.3-Flash fallback. HWBEST: PL-4 lane (rule 1.6). |
 
 Notes:
 - DeepSeek-V4.1-Flash has SGLang day-0 support on Blackwell, H200, and MI350X. vLLM supports the DeepSeek-V4 family.
@@ -132,6 +134,33 @@ Rules:
    model answers directly. Record the mode in the environment record.
    The exact OSL rule (2.3) still applies: `max_tokens` limits the total
    output, thinking tokens included.
+
+### 1.6 Comparability categories
+
+Every result row carries one comparability category. The category says
+how the row matches the reference model of its tier. The assembler
+checks the category and enforces the table rules (spec 07.3).
+
+| Category | Meaning | Assignment |
+|---|---|---|
+| STRICT | Identical model revision, precision, and payload profile as the tier reference. | The selected model of the tier (1.1 to 1.3) at the common comparable precision (PL-8). |
+| ARCH | A different model of the same tier. | Fallback models: GLM-5.3-Flash (Tier 2), Qwen3-8B (Tier 1). These rows show the hardware, not a like-for-like model comparison. |
+| HWBEST | The best supported model and precision on the system. | The native FP4 lane (PL-4). |
+
+Rules:
+1. Assign the category in the run manifest (spec 05.4, field
+   `comparability`). The assembler verifies the assignment against
+   this table. A mismatch marks the row INVALID with the flag
+   COMPARABILITY.
+2. Never put an ARCH row in the same table as a STRICT row
+   (spec 07.3).
+3. Never put an HWBEST row in the same table as a STRICT or ARCH row.
+4. Tier 3 (Kimi K3.1-Pro) rows are STRICT within the Tier 3 lane.
+   Tier 3 rows are never comparable with Tier 2 rows. Report them in
+   a separate table (rule 1.3).
+5. A fallback model used because the selected model does not run on a
+   SUT or stack (rule 1.1 notes, rule 1.5.6) is ARCH. Flag the row
+   DEV as well, and record the reason.
 
 ## 2. Payload profiles
 

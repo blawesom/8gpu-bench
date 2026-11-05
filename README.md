@@ -89,7 +89,7 @@ tokens, so every selected model runs every lane natively.
 | [spec/00-scope-and-definitions.md](spec/00-scope-and-definitions.md) | Scope, terms, rules. |
 | [spec/01-systems-under-test.md](spec/01-systems-under-test.md) | Hardware matrix, entry criteria. |
 | [spec/02-inference-stacks.md](spec/02-inference-stacks.md) | Stack set, version pinning, baseline config. |
-| [spec/03-benchmark-harnesses.md](spec/03-benchmark-harnesses.md) | Dual-harness method, client setup. |
+| [spec/03-benchmark-harnesses.md](spec/03-benchmark-harnesses.md) | Primary harness and cross-checks, client setup. |
 | [spec/04-workloads.md](spec/04-workloads.md) | Models, payload profiles, scenarios, test matrix. |
 | [spec/05-test-protocol.md](spec/05-test-protocol.md) | Run procedure, comparability, validity checks. |
 | [spec/06-metrics.md](spec/06-metrics.md) | Metrics M1 to M24. |
@@ -98,11 +98,19 @@ tokens, so every selected model runs every lane natively.
 ## Status and next steps
 
 - Phase 0 (research): done.
-- Phase 1 (specification): this document set.
+- Phase 1 (specification): this document set, benchmark spec 1.1.0
+  (see the `VERSION` file for the four versioned artifacts).
 - Phase 2 (pilot): in progress. The corpus generator, the test-point
   runner and the results assembler are in `tools/`. Example run
   manifests are in `runs/`. Next: pin versions, verify the harness
   dataset schemas, run one system per vendor end to end.
+
+The benchmark spec 1.1.0 changes (third-party review, November 2026):
+statistical reporting (confidence intervals, p10/p90, five to seven
+repetitions), randomized value order with thermal soak and reference
+points, model comparability categories (STRICT / ARCH / HWBEST),
+JSON-canonical results with an automated `validation.json`.
+See [PLAN.md](PLAN.md), section 8, for the deferred items.
 
 Open decisions are listed in [PLAN.md](PLAN.md), section 7.
 

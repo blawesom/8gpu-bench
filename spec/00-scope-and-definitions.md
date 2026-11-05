@@ -50,6 +50,11 @@ Use these terms with these meanings in all documents.
 | Repetition | One full measured run of one test point. |
 | Environment record | The full list of versions, settings, and hashes for one run. See spec 07. |
 | Pilot phase | A system is in pilot phase if its software is not general availability. |
+| Comparability category | The level of model match of a result row. STRICT: identical model revision and precision. ARCH: a different model of the same tier (for example a fallback model). HWBEST: the hardware-best precision lane (native FP4). See spec 04.1.6. |
+| Validity level | The state of a result row: VALID, QUALIFIED, or INVALID. See spec 05.7. |
+| Reference point | A small fixed test point that the campaign re-runs to detect performance drift. See spec 05.2. |
+| Thermal soak | A fixed idle wait between load phases so the GPU reaches a stable temperature before a measured pass. See spec 05.3. |
+| Confidence interval | The range that holds the measured value for a stated share of resampled repetitions. This project uses a 95% bootstrap interval. See spec 07.1.2. |
 
 ## 3. Rules
 
@@ -77,3 +82,19 @@ Use these terms with these meanings in all documents.
 
 - A result is valid only if it passes the checks in spec 05.7.
 - An invalid result is marked INVALID. Do not delete it.
+- Every row carries a validity level: VALID, QUALIFIED, or INVALID.
+  The levels are defined in spec 05.7. The assembler assigns them.
+
+### 3.5 Versioning
+
+- The repository keeps one `VERSION` file with four versioned artifacts:
+  `benchmark_spec`, `runner_version`, `assembler_version`,
+  `corpus_version`, and `result_schema_version`.
+- Record all versions in every run record and in the aggregate results.
+- Compare two result rows only when the `benchmark_spec` version of
+  both rows matches. Otherwise report the rows, but state that the
+  benchmark versions differ.
+- Raise the `benchmark_spec` version when a rule in this document set
+  changes in a way that makes new results not comparable with old ones
+  (for example: a new validity rule, a changed repetition count).
+- Raise the tool versions when the tools change without a spec change.

@@ -2,27 +2,127 @@
 
 ## 1. Result store layout
 
+One campaign is one directory.
+The runner writes the per-run artifacts.
+The assembler writes the aggregate files.
+JSON is the canonical format.
+CSV and Markdown are generated from the JSON.
+
 ```
-results/
-  <campaign-id>/
-    runs/
-      <run-id>/
-        meta.json          # environment record (below)
-        server.log
-        harness-A/         # raw harness output (csv/json)
-        harness-B/         # raw harness output (csv/json)
-        power.csv          # 1 Hz power trace
-    results.csv            # all rows, one per test point + harness
-    headlines.md           # comparison tables (below)
-    report.md              # final narrative report
+results/<campaign-id>/
+  <run-id-prefix>/                          # one per (SUT, stack, version, model, TP)
+    <profile>-<scenario>-<regime>[-OPEN]-r<rep>/
+      meta.json                             # environment record (section 4)
+      server-<n>.log                        # one per container start
+      power-<harness>-C<c>.csv              # telemetry rows of one measured pass
+      guidellm/C<c>/                        # raw primary harness output
+      crosscheck-genai-perf/C<c>/           # cross-check output (optional)
+  runs.jsonl                                # one record per (test point, harness, value, repetition)
+  aggregate/
+    results.json                            # canonical: records + aggregates + versions
+    results.csv                             # generated from results.json
+    headlines.md                            # generated from results.json
+    validation.json                         # validity levels, V8 drift (section 1.3)
+  report.md                                 # final narrative report
 ```
+
+Rules:
+1. `results.json` is the canonical result format.
+   The assembler generates `results.csv` and `headlines.md` from it.
+   Do not edit the generated files by hand.
+2. Keep every individual repetition in the result store.
+   Do not aggregate or delete raw records.
+3. The `<run-id-prefix>` directory is the per-system, per-stack
+   directory. The prefix encodes SUT, stack, version, model, and TP.
+4. Multiple run manifests (SUTs, stacks, lanes) append to the same
+   `runs.jsonl` of one campaign.
 
 Run ID format: `SUTx-stack-vvv-mmmm-TPx-PFx-Px-Wx-Cxx-rN`
 Example: `SUT3-vllm-0.32-gpt-oss-120b-TP8-PF1-PU-WON-C128-r2`
 
+### 1.1 Result versions
+
+Every result row and every aggregate file records the benchmark
+versions (spec 00.3.5):
+
+| Field | Source |
+|---|---|
+| benchmark_spec | VERSION file, key `benchmark_spec`. |
+| runner_version | VERSION file, key `runner_version`. |
+| assembler_version | VERSION file, key `assembler_version`. |
+| corpus_version | VERSION file, key `corpus_version`. |
+| result_schema_version | VERSION file, key `result_schema_version`. |
+
+The runner writes the block to `meta.json` (section 4).
+The assembler writes it to `results.json` and `validation.json`.
+Two rows with different `benchmark_spec` values are reported but not
+ranked against each other (spec 00.3.5).
+
+### 1.2 results.json structure
+
+```
+{
+  "schema_version": "<result_schema_version>",
+  "campaign_id": "<campaign-id>",
+  "generated_at": "<UTC timestamp>",
+  "generator": { "assembler_version": "...", "benchmark_spec": "..." },
+  "versions": { ...the five fields of 1.1... },
+  "reference": { "count": 4, "throughputs_tps": [ ... ],
+                 "drift_pct": 1.2, "limit_pct": 5.0, "pass": true },
+  "records": [ <every runs.jsonl record, unchanged> ],
+  "aggregates": [
+    { <identity fields of the test point>,
+      "repetitions": 5,
+      "out_tps": <median>, "out_tps_p10": ..., "out_tps_p90": ...,
+      "cov_pct": ..., "ci95_low": ..., "ci95_high": ...,
+      "validity": "VALID | QUALIFIED | INVALID",
+      "reasons": [ ... ] }
+  ]
+}
+```
+
+The `aggregates` list holds one entry per test point
+(SUT, stack, harness, model, precision, lane, profile, scenario,
+regime, traffic mode, concurrency), computed from the raw records.
+The confidence interval is a 95% percentile bootstrap over the
+repetition values with 2 000 resamples, seeded from the campaign ID
+and the test point key so a re-assembly gives the same interval.
+
+### 1.3 validation.json structure
+
+```
+{
+  "schema_version": "<result_schema_version>",
+  "campaign_id": "<campaign-id>",
+  "generated_at": "<UTC timestamp>",
+  "versions": { ...the five fields of 1.1... },
+  "reference": { "count": 4, "drift_pct": 1.2, "limit_pct": 5.0,
+                 "pass": true },
+  "runs": [
+    { "run_id": "...", "validity": "VALID | QUALIFIED | INVALID | null",
+      "reasons": [ ... ] }
+  ],
+  "test_points": [
+    { "key": "<group key string>", "validity": "...",
+      "repetitions": 5, "reasons": [ ... ] }
+  ],
+  "summary": { "valid": 0, "qualified": 0, "invalid": 0,
+               "crosscheck": 0, "reference": 0 }
+}
+```
+
+`runs` holds the per-run validity (V1, V5, V6, V7 and failure flags).
+`test_points` holds the per-test-point validity (V3, V9, and the V8
+campaign drift). The levels are defined in spec 05.7.1.
+Cross-check rows (CROSSCHECK) and reference rows (REFERENCE) carry
+`null` validity.
+
 ## 2. results.csv columns
 
 One row per (test point, harness, repetition).
+The file is generated from `results.json` (section 1.2).
+The per-row statistics (p10, p90, confidence interval) live in the
+`aggregates` of `results.json`, not here.
 
 | Column | Example | Source |
 |---|---|---|
@@ -35,6 +135,7 @@ One row per (test point, harness, repetition).
 | model | gpt-oss-120b | spec 04 |
 | model_revision | hf commit SHA | Environment record |
 | precision | MXFP4 | spec 04 |
+| comparability | STRICT / ARCH / HWBEST | Manifest field, checked per spec 04.1.6 |
 | lane | BASE / TUNED | spec 02.4.1 |
 | tp | 8 | Test point |
 | payload_profile | PF-1 ... PF-5 | spec 04 |
@@ -42,7 +143,8 @@ One row per (test point, harness, repetition).
 | regime | WON / WOFF | spec 04 |
 | traffic_mode | closed / open | spec 03.3 |
 | concurrency | 128 | Test point |
-| repetition | 1..3 | spec 05.3 |
+| value_order | 3 | Position of this value in the randomized sweep order (spec 05.2.1). |
+| repetition | 1..5 or 1..7 | spec 05.3, 05.4 |
 | ttft_ms_p90 | 412 | M1 |
 | tpot_ms_p90 | 28.4 | M2 |
 | itl_ms_p99 | 41.0 | M3 |
@@ -60,22 +162,30 @@ One row per (test point, harness, repetition).
 | flags | PILOT, DEV, SPEC, TUNED, OPEN, INVALID | spec 01/02/03/05 |
 | deviation_note | Text, or blank | spec 05.5 |
 | error_rate_pct | 0.0 | V1 |
-| cov_pct | 1.8 | V3 |
+| validity | VALID / QUALIFIED / INVALID / blank | spec 05.7.1 (per-run level) |
 
 ## 3. Headlines tables
 
-Build one table per model and per regime.
+Build one table per model, precision, scenario, regime, payload
+profile, config lane, traffic mode, and comparability category.
 Rows: SUT x stack, at the highest measured concurrency.
-Columns: the headline metrics (spec 06.9): M5, M8, M24, M1 to M4
-(p90), M15, M18.
+Columns: the headline metrics (spec 06.9): M5 (with its 95%
+confidence interval), M8, M24, M1 to M4 (p90), M15, M18.
 Sort: by M5 (out_tps) descending.
 Flags print inline (for example: "678 (PILOT)").
+The M5 cell prints the median with the interval: "5 420 (5 310 to 5 510)".
 
 Rules:
 1. Never mix CFG-BASE and CFG-TUNED rows in one table (spec 02.4.1).
 2. Never mix closed-loop and OPEN rows in one table (spec 03.3).
 3. The SLO view (M10, M11) is secondary (spec 06.4). It does not
    select the headline row.
+4. Never mix comparability categories in one table (spec 04.1.6).
+   The table heading states the category.
+5. Cross-check rows (CROSSCHECK) and reference rows (REFERENCE)
+   never enter a headline table.
+6. An INVALID row is marked inline. A QUALIFIED row prints its
+   reasons in a footnote (spec 05.7.1).
 
 Example shape (values are illustrative):
 
@@ -91,6 +201,7 @@ Record all of these per run:
 - OS image name and hash
 - CPU model and count, system RAM
 - GPU model, count, firmware, driver version
+- GPU power limit in effect (vendor default unless recorded otherwise)
 - Runtime version (CUDA / ROCm / oneAPI)
 - Container digest or package version per stack
 - Harness versions
@@ -101,6 +212,12 @@ Record all of these per run:
 - Room temperature band
 - Client machine identity and network path
 - Campaign and run identifiers
+- Benchmark versions (section 1.1)
+- Comparability category of the run (spec 04.1.6)
+- Order seed and the actual value order of the sweep (spec 05.2.1)
+- Thermal soak settings actually applied (spec 05.3 step 6)
+- GPU temperature at the start and end of each measured pass
+  (from the telemetry, when available)
 
 ## 5. Final report (report.md)
 
@@ -124,6 +241,12 @@ Structure:
    separately, flagged CROSSCHECK (spec 03.1).
 2. Never mix prompt scenarios in one table.
 3. Never mix precisions in one table.
-4. A missing cell is "N/A" with the reason in a footnote.
-5. Every table states the SLO in use and the model revision.
-6. Archive raw data for 3 years.
+4. Never mix comparability categories in one table (spec 04.1.6).
+5. A missing cell is "N/A" with the reason in a footnote.
+6. Every table states the SLO in use and the model revision.
+7. Archive raw data for 3 years.
+8. `results.json` is canonical. Generate the CSV and Markdown from it
+   with the assembler. Do not keep hand-edited copies.
+9. State the benchmark versions (section 1.1) in every report.
+10. Cite `validation.json` when a table contains QUALIFIED or
+    INVALID rows.
