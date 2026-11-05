@@ -128,3 +128,7 @@ All documents use the ASD-STE100 standard (Simplified Technical English).
    does not list a tested AMD path for the 27B.
 10. Verify Kimi K3.1 Pro concurrency ceiling per SUT in the pilot
     (published recipes use about 48).
+11. Production lanes (PF-7 to PF-9, from observed traffic):
+    confirm the DeepSeek-V4.1-Flash context window (PF-9 needs
+    300 000 tokens), and select the public text source for the
+    long-prompt corpora (rule 2.2.12).

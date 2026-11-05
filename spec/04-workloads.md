@@ -134,6 +134,9 @@ versioned artifacts.
 | PF-3 | Chat distribution | Dataset | Empirical | Empirical, capped at 1 024 | Real chat traffic shape. |
 | PF-4 | Agentic / RAG | Distribution synthetic | Mean 4 096, SD 2 048 | 256 | Long input, short output. Agent and RAG shape. |
 | PF-5 | Decode-heavy | Distribution synthetic | 1 024 | 4 096 | Reasoning and long-output shape. |
+| PF-7 | Production p50 | Session model | 30 000 | 500 | Production lane, median. |
+| PF-8 | Production p90 | Session model | 100 000 | 5 000 | Production lane, high. |
+| PF-9 | Production p99 | Session model | 250 000 | 50 000 | Production lane, extreme. |
 
 Rules:
 1. PF-1 and PF-2 are headline profiles. Every SUT reports them.
@@ -143,6 +146,16 @@ Rules:
 4. A new profile gets a new ID. Do not change an ID that has results.
 5. PF-6 (trace replay) is reserved. Define it when production traces
    exist. Do not use it in this version.
+6. PF-7 to PF-9 are production lanes. They run in scenario P-C (3.1).
+   Report them in separate tables. Never mix them with P-U rows.
+7. A production lane needs a model context window of at least
+   ISL plus OSL. PF-9 needs 300 000 tokens. Check the model limit
+   before the run. Mark the lane N/A if the model falls short.
+   A model that needs a context extension (example: YaRN) runs the
+   lane only with the extension recorded. Flag the row CTX.
+8. Request counts for the production lanes replace the 1 000-request
+   rule (spec 03.3): PF-7 uses 200 requests, PF-8 uses 100,
+   PF-9 uses 30.
 
 PF-3 data source:
 - Default: LMSYS-Chat-1M, a fixed recorded sample of 2 000 conversations.
@@ -166,6 +179,21 @@ request holds the prompt text, the target ISL, and the target OSL.
    one measured run of 1 000 requests.
 7. PF-4 and PF-5 sample the ISL from the distribution with the fixed
    seed. The corpus stores the sampled value per request.
+8. A production-lane corpus holds sessions, not single requests.
+   A session has several turns. Each turn re-sends the full session
+   history plus new turn text. The prefix cache of the server can
+   reuse the history.
+9. Default session length: 10 turns. A T-turn session that re-sends
+   the history each turn gives a token-level cache hit of about
+   1 minus 2 divided by T. Ten turns give about 80%.
+10. Each turn of a session has the exact profile ISL and OSL
+    (rule 2.3.6). The generator sizes the history share and the new
+    turn text per turn.
+11. The generator computes the expected token-level cache hit of each
+    session corpus. Record the value with the corpus. The run validity
+    check compares it with the server metric (rule 5.6).
+12. Long prompts need source text. Sample the text from a recorded
+    public text corpus. Record the source, the revision, and the seed.
 
 ### 2.3 Token control
 
@@ -177,12 +205,14 @@ request holds the prompt text, the target ISL, and the target OSL.
 5. Verify the actual token counts against the profile:
    - PF-1, PF-2, PF-4, PF-5: within 1 token of the target.
    - PF-3: within 10% of the recorded corpus statistics.
+6. For PF-7 to PF-9, pad or truncate each turn to the exact ISL.
+   Force the OSL per turn with `max_tokens`. Disable early stop.
 
 ### 2.4 Harness mapping
 
 | Profile | GuideLLM input | GenAI-Perf input |
 |---|---|---|
-| PF-1 to PF-5 | The corpus file, through the dataset data kind. | The corpus file, through the custom dataset input. |
+| PF-1 to PF-9 | The corpus file, through the dataset data kind. | The corpus file, through the custom dataset input. |
 
 Both harnesses have built-in synthetic generation options. Do not use
 them for measured runs. The corpus file is the single source of truth.
@@ -199,11 +229,17 @@ defines the request shape. They are independent axes.
 |---|---|---|
 | P-U | Unique | No two requests share a prefix. Disable prefix cache where the stack allows. |
 | P-S | Shared prefix | 80% of the prompt is one fixed system prompt. The remaining 20% is unique. Enable prefix cache. |
+| P-C | Cached sessions | Session corpus (rule 2.2.8). Prefix cache enabled. Target token-level hit rate: 80%. |
 
 Run rules:
 1. Every measured test point runs P-U.
 2. Run P-S for SGLang and vLLM only, at concurrency 32 and 128.
 3. Label P-S rows clearly. Never mix P-S rows with P-U rows in one table.
+4. P-C runs with the production lanes PF-7 to PF-9 only.
+   Never mix P-C rows with P-U or P-S rows in one table.
+5. P-C shows the prefix-cache behavior of each stack under a real
+   session mix. SGLang RadixAttention and vLLM paged block reuse
+   differ here. This is the purpose of the lane.
 
 ## 4. Traffic regimes
 
@@ -225,15 +261,31 @@ Test point matrix (per model, per stack, per SUT):
 | TP7 | Tier 2 | 8 | PF-3 | P-U | W-ON (16, 64) |
 | TP8 | Tier 2 | 8 | PF-4 | P-U | W-ON (16, 64) |
 | TP9 | Tier 2 | 8 | PF-5 | P-U | W-ON (16) |
+| TP10 | Tier 2 | 8 | PF-7 | P-C | W-ON (4, 16, 32) |
+| TP11 | Tier 2 | 8 | PF-8 | P-C | W-ON (4, 16) |
+| TP12 | Tier 2 | 8 | PF-9 | P-C | W-ON (1, 4, 16) |
 
 TP1 to TP6 are headline test points. TP7 to TP9 are secondary lanes.
 Run the secondary lanes after the headline lanes pass on the SUT.
+TP10 to TP12 are production lanes. Run them last, after the
+secondary lanes. Tier 3 models with a 1M context (example: Kimi
+K3.1-Pro) may run the production lanes. Mark them T3.
 
 ## 5. Workload validity
 
 1. The first 100 requests of a run are warmup. Discard them.
-2. A run is complete when 1 000 measured requests finish or 1 800 s elapse.
+   For the production lanes, warm up with at least one full session
+   per concurrent stream, so that the cache is in a steady state.
+2. A run is complete when 1 000 measured requests finish or 1 800 s
+   elapse. For the production lanes, use the request counts of
+   rule 2.1.8. The time limit is 7 200 s.
 3. If more than 2% of requests time out or error, the run is invalid.
 4. Re-run an invalid run once. If it fails again, mark INVALID.
 5. A run fails the profile check if the token counts do not meet
    rule 2.3.5. Mark it INVALID with the flag PROFILE.
+6. For P-C runs, read the token-level prefix-cache hit rate from the
+   server metrics (metric M22). The run is valid if the measured hit
+   rate is within 5 points of the expected value from the corpus.
+   Otherwise mark the run INVALID with the flag CACHE.
+7. The request timeout is 300 s (spec 03.3), except for the
+   production lanes: PF-8 and PF-9 use 3 600 s per request.

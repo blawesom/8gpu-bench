@@ -77,7 +77,18 @@ Power rules:
 4. If no power data is available (for example: D270 early tooling),
    report M16 to M19 as N/A with the reason.
 
-## 7. Cost metric (informational)
+## 7. Cache metrics
+
+| ID | Metric | Unit | Definition |
+|---|---|---|---|
+| M22 | Prefix cache hit rate | % | Token-level cache hits divided by input tokens, from server metrics. |
+| M23 | Session capacity | sessions | The highest concurrency where the PF-9 lane runs the full request count without an out-of-memory error. |
+
+M22 records the real cache behavior under the P-C scenario.
+M23 shows the long-context capacity of the SUT. KV cache size, not
+compute, sets this limit. Report M23 for every SUT that runs PF-9.
+
+## 8. Cost metric (informational)
 
 | ID | Metric | Unit | Definition |
 |---|---|---|---|
@@ -87,8 +98,9 @@ Power rules:
 M20 and M21 are informational only.
 Price changes. Do not rank systems on M21 alone.
 
-## 8. Headline table metrics
+## 9. Headline table metrics
 
 The headline comparison table (spec 07.2) carries:
 M5, M8, M10, M11, M1, M2 (at SLO concurrency), M15, M18.
+The production-lane table carries: M5, M8, M1, M2, M22, M23.
 All other metrics live in the full result file.

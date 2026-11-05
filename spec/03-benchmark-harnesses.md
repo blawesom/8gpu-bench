@@ -40,12 +40,12 @@ Fix these settings for both harnesses:
 
 | Setting | Value |
 |---|---|
-| Requests per run | 1 000 per concurrency point. |
+| Requests per run | 1 000 per concurrency point. Production lanes: PF-7 200, PF-8 100, PF-9 30 (spec 04). |
 | Payload source | The profile corpus file (spec 04.2). The harness does not generate prompts. |
 | Request distribution | Constant concurrency (open-loop optional lane, marked OPEN). |
 | Concurrency values | 1, 2, 4, 8, 16, 32, 64, 128, 256. |
 | Warmup before measure | 100 requests or 60 s, whichever is longer. |
-| Timeout per request | 300 s. |
+| Timeout per request | 300 s. Production lanes PF-8 and PF-9 use 3 600 s. |
 | Retry on network error | None. Drop the request, count it as a failure. |
 | Random seed | Fixed per campaign, recorded. |
 
