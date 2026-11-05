@@ -1,0 +1,13 @@
+---
+# AMD systems: SUT-4, SUT-5, SUT-6.
+
+gpu_vendor: "amd"
+
+# ROCm version. PIN THE EXACT VERSION AT PHASE 2.
+rocm_version: "7.0"
+amdgpu_install_version: "6.0.4"
+
+# AMD GPU repo base. Pin the versioned repo, not the latest one.
+rocm_apt_repo: "https://repo.radeon.com/rocm/apt/{{ rocm_version }}"
+
+gpu_query_command: "rocm-smi"

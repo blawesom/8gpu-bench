@@ -1,0 +1,9 @@
+---
+# Refresh the environment record only (spec 07.4).
+# Cheap. Run before each campaign day.
+
+- name: Refresh the environment record
+  hosts: nvidia:amd:intel
+  become: true
+  roles:
+    - env-record

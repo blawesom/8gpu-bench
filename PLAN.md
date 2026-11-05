@@ -91,7 +91,7 @@ All documents use the ASD-STE100 standard (Simplified Technical English).
 |---|---|---|
 | 0 | Research | Repo tables verified. Done (Nov 2026). |
 | 1 | Specification | This document set is complete and approved. |
-| 2 | Pilot | One system per vendor runs all core tests end-to-end. The corpus generator emits all profile corpora with checksums. |
+| 2 | Pilot | One system per vendor runs all core tests end-to-end. The corpus generator emits all profile corpora with checksums. The Ansible bring-up passes `verify.yml` on every SUT. |
 | 2a | Hardware pilot | Intel D270 and AMD MI450 support verified. Fail = mark system pilot-phase in results. |
 | 3 | Baseline run | H200 + RTX PRO 6000 + MI300X complete all tests. |
 | 4 | Full campaign | All systems, all core stacks. |
@@ -134,3 +134,8 @@ All documents use the ASD-STE100 standard (Simplified Technical English).
     every selected model runs every production lane natively.
     Remaining: select the public text source for the long-prompt
     corpora (rule 2.2.12).
+12. Infra pins at Phase 2 (infra/ansible): exact driver versions
+    per vendor, jointly with the container digests (the driver must
+    match what the pinned images expect). Verify the AMD GPU count
+    assertion against real rocm-smi JSON output. Verify the D270
+    xpu-smi output format.

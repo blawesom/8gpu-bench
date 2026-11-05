@@ -1,0 +1,42 @@
+{
+  "record_type": "node-environment",
+  "campaign_id": {{ campaign_id | to_json }},
+  "recorded_at": {{ ansible_date_time.iso8601 | to_json }},
+  "sut_id": {{ sut_id | default('CLIENT') | to_json }},
+  "host": {{ inventory_hostname | to_json }},
+  "os": {
+    "pretty_name": {{ ansible_facts['os_family'] | default('') | to_json }},
+    "distribution": {{ ansible_distribution | default('') | to_json }},
+    "distribution_version": {{ ansible_distribution_version | default('') | to_json }},
+    "kernel": {{ ansible_kernel | default('') | to_json }},
+    "architecture": {{ ansible_architecture | default('') | to_json }},
+    "image_hash": {{ (image_marker.stat.checksum | default('NOT-RECORDED: no /etc/8gpu-bench-image.sha256 marker')) | to_json }}
+  },
+  "bios": {
+    "raw": {{ bios_info.stdout | to_json }}
+  },
+  "cpu": {
+    "model": {{ ansible_facts['processor'][2] | default(ansible_facts['processor'][0] | default('')) | to_json }},
+    "cores": {{ ansible_facts['processor_vcpus'] | default(0) | to_json }}
+  },
+  "memory_gb": {{ (ansible_memtotal_mb / 1024) | round(1) }},
+  "gpu": {
+    "vendor": {{ gpu_vendor | default('none') | to_json }},
+    "model": {{ gpu_model | default('') | to_json }},
+    "expected_count": {{ 8 if gpu_vendor is defined else 0 }},
+    "memory_gb_per_gpu": {{ gpu_memory_gb | default(0) }},
+    "driver_version": {{ ((driver_version.stdout_lines[0] | default('n/a')) if (driver_version is defined and (driver_version.stdout_lines | length) > 0) else 'n/a') | to_json }},
+    "inventory_raw": {{ (gpu_inventory.stdout | default('')) | to_json }}
+  },
+  "pilot_phase": {{ (pilot | default(false)) | to_json }},
+  "container_runtime": {
+    "docker_version": {{ ansible_facts['docker_version'] | default('unknown') | to_json }},
+    "images": {{ docker_digests.stdout_lines | default([]) | to_json }}
+  },
+  "telemetry": {
+    "interval_seconds": {{ telemetry_interval_seconds }},
+    "output_dir": {{ telemetry_output_dir | to_json }}
+  },
+  "power_profile": "vendor-default",
+  "notes": "Fill model checkpoint fields at run time per spec 07.4."
+}

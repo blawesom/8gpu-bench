@@ -1,0 +1,15 @@
+---
+# NVIDIA systems: SUT-1, SUT-2, SUT-3.
+
+gpu_vendor: "nvidia"
+
+# Driver branch. PIN THE EXACT VERSION AT PHASE 2, together with the
+# container digests (the driver branch must match what the pinned
+# vLLM / TensorRT-LLM images expect). See spec 02.2 and PLAN.md.
+nvidia_driver_package: "nvidia-driver-580-server"
+
+# Container toolkit for GPU passthrough.
+nvidia_container_toolkit_repo: "https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list"
+
+# Query tool used by telemetry and env-record.
+gpu_query_command: "nvidia-smi"

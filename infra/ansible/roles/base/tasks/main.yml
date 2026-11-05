@@ -1,0 +1,48 @@
+---
+# Base OS preparation. Applies to SUTs and the client (spec 05.6).
+
+- name: Set the timezone to UTC
+  community.general.timezone:
+    name: "{{ timezone }}"
+
+- name: Install chrony
+  ansible.builtin.apt:
+    name: chrony
+    state: present
+    update_cache: true
+
+- name: Configure chrony with the campaign NTP source
+  ansible.builtin.template:
+    src: chrony.conf.j2
+    dest: /etc/chrony/chrony.conf
+    mode: "0644"
+  notify: Restart chrony
+
+- name: Disable services that must not run during measured runs
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: stopped
+    enabled: false
+  loop: "{{ disabled_services }}"
+  failed_when: false
+
+- name: Set kernel parameters for GPU serving
+  ansible.posix.sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    state: present
+    reload: true
+  loop:
+    - { name: "vm.swappiness", value: "1" }
+    - { name: "vm.max_map_count", value: "1048576" }
+    - { name: "kernel.numa_balancing", value: "0" }
+
+- name: Raise locked-memory and file-descriptor limits
+  ansible.builtin.copy:
+    dest: /etc/security/limits.d/90-8gpu-bench.conf
+    mode: "0644"
+    content: |
+      * soft memlock unlimited
+      * hard memlock unlimited
+      * soft nofile 1048576
+      * hard nofile 1048576

@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# 8gpu-bench GPU telemetry sampler (spec 06.6).
+# Writes one CSV per day. One row per sample, per GPU.
+# Columns: timestamp, gpu_index, power_w, temp_c, memory_used_mb, util_pct
+set -u
+
+OUT_DIR="{{ telemetry_output_dir }}"
+INTERVAL={{ telemetry_interval_seconds }}
+VENDOR="{{ gpu_vendor | default('unknown') }}"
+
+while true; do
+  TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  OUT="${OUT_DIR}/$(date -u +%Y-%m-%d).csv"
+
+  case "${VENDOR}" in
+    nvidia)
+      nvidia-smi --query-gpu=index,power.draw,temperature.gpu,memory.used,utilization.gpu \
+        --format=csv,noheader,nounits | while IFS=',' read -r idx pw temp mem util; do
+        printf '%s,%s,%s,%s,%s,%s\n' \
+          "${TS}" "$(echo "${idx}" | tr -d ' ')" \
+          "$(echo "${pw}" | tr -d ' ')" "$(echo "${temp}" | tr -d ' ')" \
+          "$(echo "${mem}" | tr -d ' ')" "$(echo "${util}" | tr -d ' ')" >> "${OUT}"
+      done
+      ;;
+    amd)
+      rocm-smi --csv --showpower --showtemp --showmemuse --showuse | tail -n +2 | \
+        while IFS=',' read -r idx pw temp mem util; do
+        printf '%s,%s,%s,%s,%s,%s\n' \
+          "${TS}" "$(echo "${idx}" | tr -d ' ')" \
+          "$(echo "${pw}" | tr -d ' ')" "$(echo "${temp}" | tr -d ' ')" \
+          "$(echo "${mem}" | tr -d ' ')" "$(echo "${util}" | tr -d ' ')" >> "${OUT}"
+      done
+      ;;
+    intel)
+      # D270 pilot phase. xpu-smi output format unverified (spec 06.6.4).
+      if command -v xpu-smi >/dev/null 2>&1; then
+        xpu-smi dump -d 0,1,2,3,4,5,6,7 -m power,temperature.gpu,memory.used,utilization.gpu \
+          >> "${OUT}.intelraw" 2>/dev/null || true
+      fi
+      ;;
+    *)
+      # No vendor: sample nothing. The client group does not run GPUs.
+      ;;
+  esac
+
+  sleep "${INTERVAL}"
+done

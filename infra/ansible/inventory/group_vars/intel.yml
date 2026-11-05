@@ -1,0 +1,13 @@
+---
+# Intel system: SUT-7 (GPU D270, Crescent Island).
+# PILOT PHASE (spec 01.1). The driver and tooling are in customer
+# sampling. Verify every step. Do not use these results as headline.
+
+gpu_vendor: "intel"
+
+# oneAPI / XPU level. TO VERIFY when hardware arrives.
+xpu_level: "pilot"
+
+# Telemetry tooling is unverified (spec 06.6.4). If no sensor data
+# exists, M16 to M19 report N/A.
+gpu_query_command: "xpu-smi"

@@ -1,0 +1,52 @@
+---
+# Emit the node-level environment record (spec 07.4).
+# Model checkpoint fields are added by the harness at run time.
+
+- name: Create the record directory
+  ansible.builtin.file:
+    path: "{{ env_record_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Collect OS identity
+  ansible.builtin.command: hostnamectl
+  register: host_identity
+  changed_when: false
+
+- name: Collect BIOS and firmware info
+  ansible.builtin.command: dmidecode -t bios
+  register: bios_info
+  changed_when: false
+
+- name: Collect the OS image hash
+  ansible.builtin.stat:
+    path: /etc/8gpu-bench-image.sha256
+    checksum_algorithm: sha256
+  register: image_marker
+
+- name: Collect the GPU inventory
+  ansible.builtin.command: "{{ gpu_query_command }}"
+  register: gpu_inventory
+  changed_when: false
+  failed_when: false
+
+- name: Collect the installed driver version
+  when: gpu_vendor is defined and gpu_vendor == "nvidia"
+  ansible.builtin.command: nvidia-smi --query-gpu=driver_version --format=csv,noheader
+  register: driver_version
+  changed_when: false
+
+- name: Collect the Docker image digests
+  ansible.builtin.command: docker images --digests --format "{{ '{{.Repository}}:{{.Tag}} {{.Digest}}' }}"
+  register: docker_digests
+  changed_when: false
+
+- name: Write the node environment record
+  ansible.builtin.template:
+    src: node-meta.json.j2
+    dest: "{{ env_record_dir }}/node-meta.json"
+    mode: "0644"
+
+- name: Show the record path
+  ansible.builtin.debug:
+    msg: "Environment record written to {{ env_record_dir }}/node-meta.json"

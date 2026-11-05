@@ -1,0 +1,20 @@
+---
+# Full bring-up. Order per spec 01.5.
+# Usage: ansible-playbook playbooks/site.yml [--limit sut1-h200]
+
+- name: Bring up the load client
+  hosts: client
+  become: true
+  roles:
+    - base
+
+- name: Bring up the SUTs
+  hosts: nvidia:amd:intel
+  become: true
+  roles:
+    - base
+    - gpu-driver
+    - container-runtime
+    - telemetry
+    - env-record
+    - smoke

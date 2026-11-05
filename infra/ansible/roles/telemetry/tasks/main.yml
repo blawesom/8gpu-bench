@@ -1,0 +1,29 @@
+---
+# 1 Hz power/thermal sampler (spec 06.6, metrics M15 to M19).
+# Runs as a systemd service. Writes one CSV per day.
+
+- name: Create the telemetry output directory
+  ansible.builtin.file:
+    path: "{{ telemetry_output_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Install the sampler script
+  ansible.builtin.template:
+    src: gpu-telemetry.sh.j2
+    dest: /usr/local/bin/gpu-telemetry.sh
+    mode: "0755"
+
+- name: Install the systemd unit
+  ansible.builtin.template:
+    src: gpu-telemetry.service.j2
+    dest: /etc/systemd/system/gpu-telemetry.service
+    mode: "0644"
+  notify: Restart gpu-telemetry
+
+- name: Enable and start the sampler
+  ansible.builtin.systemd:
+    name: gpu-telemetry
+    state: started
+    enabled: true
+    daemon_reload: true

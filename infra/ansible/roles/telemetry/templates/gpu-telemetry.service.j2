@@ -1,0 +1,12 @@
+[Unit]
+Description=8gpu-bench GPU telemetry sampler (1 Hz, spec 06.6)
+After=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/gpu-telemetry.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

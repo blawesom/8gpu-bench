@@ -1,0 +1,7 @@
+{% for item in ntp_servers %}
+server {{ item }} iburst
+{% endfor %}
+# Managed by 8gpu-bench. One NTP source for client and SUTs (spec 03.2).
+driftfile /var/lib/chrony/chrony.drift
+makestep 1.0 3
+rtcsync

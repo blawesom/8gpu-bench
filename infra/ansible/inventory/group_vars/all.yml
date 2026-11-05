@@ -1,0 +1,36 @@
+---
+# Common settings for every SUT and the client (spec 05.6).
+
+# Campaign identity. Recorded in the environment record (spec 07.4).
+campaign_id: "2026Q4"
+
+# Time source. Client and SUT must use the same NTP source (spec 03.2).
+ntp_servers:
+  - "pool.ntp.org"
+timezone: "UTC"
+
+# Telemetry: 1 Hz sampling per spec 06.6.
+telemetry_interval_seconds: 1
+telemetry_output_dir: "/var/log/gpu-telemetry"
+
+# Environment record output (spec 07.4).
+env_record_dir: "/opt/8gpu-bench"
+
+# Stacks run from pinned container digests (spec 02.2).
+# PIN THESE AT PHASE 2. Placeholder tags below are examples only.
+stack_images:
+  vllm: "vllm/vllm-openai:latest"
+  vllm_rocm: "vllm/vllm-openai-rocm:latest"
+  sglang: "lmsysorg/sglang:latest"
+  tensorrt_llm: "nvcr.io/nvidia/tensorrt-llm/tensorrt-llm:latest"
+
+# Tier 1 model on the node for the smoke test (spec 03.4).
+smoke_model_path: "/opt/models/Qwen3.8-27B"
+
+# Idle criteria (spec 01.3.6): 30 minutes, no error, no thermal trip.
+idle_check_minutes: 30
+
+# Services that must not run during measured runs (spec 05.6.3).
+disabled_services:
+  - "snapd"
+  - "unattended-upgrades"

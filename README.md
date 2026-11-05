@@ -77,6 +77,7 @@ tokens, so every selected model runs every lane natively.
 | File | Content |
 |---|---|
 | [PLAN.md](PLAN.md) | Phases, research summary, risks, open items. |
+| [infra/ansible/README.md](infra/ansible/README.md) | Node environment bring-up (Ansible). |
 | [spec/00-scope-and-definitions.md](spec/00-scope-and-definitions.md) | Scope, terms, rules. |
 | [spec/01-systems-under-test.md](spec/01-systems-under-test.md) | Hardware matrix, entry criteria. |
 | [spec/02-inference-stacks.md](spec/02-inference-stacks.md) | Stack set, version pinning, baseline config. |

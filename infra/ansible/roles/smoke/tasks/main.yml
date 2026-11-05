@@ -1,0 +1,76 @@
+---
+# Smoke test (spec 03.4). Runs on the SUT with the Tier 1 model.
+# Verifies that the pinned vLLM image serves on one GPU.
+
+- name: Assert the Tier 1 model path exists on the node
+  ansible.builtin.stat:
+    path: "{{ smoke_model_path }}"
+  register: model_dir
+  failed_when: false
+
+- name: Warn if the model is not present yet
+  when: not (model_dir.stat.exists | default(false))
+  ansible.builtin.debug:
+    msg: >-
+      Tier 1 model not found at {{ smoke_model_path }} on this node.
+      Download it before the smoke test (spec 04.1.5).
+
+- name: Pull the pinned vLLM image
+  ansible.builtin.command: >-
+    docker pull {{ (stack_images.vllm_rocm if gpu_vendor == 'amd' else stack_images.vllm) }}
+  changed_when: false
+
+- name: Start the vLLM server for the smoke test
+  ansible.builtin.command: >-
+    docker run -d --name smoke-vllm
+    --gpus all
+    --shm-size 64g
+    -v {{ smoke_model_path }}:/model
+    -p 8000:8000
+    {{ (stack_images.vllm_rocm if gpu_vendor == 'amd' else stack_images.vllm) }}
+    --model /model
+    --tensor-parallel-size 1
+    --max-model-len 32768
+    --gpu-memory-utilization 0.90
+    --enforce-eager
+  register: smoke_container
+  changed_when: smoke_container.rc == 0
+
+- name: Wait for the health endpoint to pass
+  ansible.builtin.uri:
+    url: "http://localhost:8000/health"
+    status_code: 200
+  register: health
+  until: health.status == 200
+  retries: 120
+  delay: 10
+
+- name: Send 10 test requests
+  ansible.builtin.uri:
+    url: "http://localhost:8000/v1/completions"
+    method: POST
+    body_format: json
+    body:
+      model: "/model"
+      prompt: "Write one sentence about the weather."
+      max_tokens: 32
+      temperature: 0
+    status_code: 200
+  loop: "{{ range(1, 11) | list }}"
+  register: smoke_requests
+
+- name: Assert every response returned text
+  ansible.builtin.assert:
+    that: item.json.choices[0].text | length > 0
+    fail_msg: "Smoke request returned empty text"
+  loop: "{{ smoke_requests.results }}"
+
+- name: Stop and remove the smoke container
+  ansible.builtin.command: docker rm -f smoke-vllm
+  changed_when: false
+
+- name: Confirm the GPUs are released
+  ansible.builtin.command: "{{ gpu_query_command }}"
+  register: gpu_state
+  changed_when: false
+  failed_when: "'No running processes' not in gpu_state.stdout and gpu_vendor == 'nvidia'"

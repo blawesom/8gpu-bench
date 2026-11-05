@@ -1,0 +1,11 @@
+---
+# Load client (spec 03.2). No GPU roles apply to this group.
+
+is_client: true
+
+# Harness versions. PIN AT PHASE 2 (spec 03.5).
+guidellm_version: "latest"
+genai_perf_version: "latest"
+
+# Smoke test target. Set to the first SUT to bring up.
+smoke_target_url: "http://sut1-h200:8000"

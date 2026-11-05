@@ -1,0 +1,36 @@
+---
+# Entry criteria verification (spec 01.3). Run any time.
+# Exits non-zero on any failure.
+
+- name: Verify the entry criteria on the SUTs
+  hosts: nvidia:amd:intel
+  become: true
+  tasks:
+    - name: Query the GPUs
+      ansible.builtin.command: "{{ gpu_query_command }}"
+      register: gpu_check
+      changed_when: false
+
+    - name: Check that the environment record exists
+      ansible.builtin.stat:
+        path: "{{ env_record_dir }}/node-meta.json"
+      register: record
+
+    - name: Check that the telemetry service is running
+      ansible.builtin.systemd:
+        name: gpu-telemetry
+      register: telemetry_service
+
+    - name: Assert the entry criteria pass
+      ansible.builtin.assert:
+        that:
+          - record.stat.exists
+          - telemetry_service.status.ActiveState == 'active'
+        fail_msg: >-
+          Entry criteria failed. The environment record is missing or
+          the telemetry service is down. Run playbooks/site.yml first.
+
+    - name: Report pilot-phase status
+      when: pilot | default(false)
+      ansible.builtin.debug:
+        msg: "PILOT PHASE. Results from this SUT carry the PILOT flag (spec 01.3)."

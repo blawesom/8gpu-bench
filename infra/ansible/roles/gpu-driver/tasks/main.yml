@@ -1,0 +1,103 @@
+---
+# Vendor GPU driver install and verification (spec 01.3, 01.5).
+# Skips the client group. Intel is pilot-phase: verify every step.
+
+- name: Check that this host expects GPUs
+  ansible.builtin.assert:
+    that: gpu_vendor is defined
+    fail_msg: "gpu_vendor is not defined for this host"
+
+# ------------------------------------------------------------------ NVIDIA
+- name: Install the pinned NVIDIA driver
+  when: gpu_vendor == "nvidia"
+  block:
+    - name: Install the driver package
+      ansible.builtin.apt:
+        name: "{{ nvidia_driver_package }}"
+        state: present
+        update_cache: true
+      register: nvidia_install
+
+    - name: Reboot after a driver install
+      ansible.builtin.reboot:
+        reboot_timeout: 900
+      when: nvidia_install is changed
+
+    - name: List GPUs
+      ansible.builtin.command: nvidia-smi -L
+      register: nvidia_gpus
+      changed_when: false
+
+    - name: Assert exactly 8 GPUs are visible
+      ansible.builtin.assert:
+        that: (nvidia_gpus.stdout_lines | length) == 8
+        fail_msg: "Expected 8 GPUs, found {{ nvidia_gpus.stdout_lines | length }}"
+
+    - name: Query GPU memory
+      ansible.builtin.command: nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits
+      register: nvidia_mem
+      changed_when: false
+
+    - name: Assert GPU memory matches the SUT entry
+      ansible.builtin.assert:
+        that: (nvidia_mem.stdout_lines | map('trim') | map('int') | min) >= gpu_memory_gb - 2
+        fail_msg: "GPU memory below expected {{ gpu_memory_gb }} GB"
+
+# ------------------------------------------------------------------ AMD
+- name: Install the pinned ROCm stack
+  when: gpu_vendor == "amd"
+  block:
+    - name: Add the versioned ROCm apt repo
+      ansible.builtin.apt_repository:
+        repo: "deb [arch=amd64] {{ rocm_apt_repo }} ubuntu noble main"
+        filename: rocm
+        state: present
+
+    - name: Install ROCm packages
+      ansible.builtin.apt:
+        name:
+          - "python3-setuptools"
+          - "rocm-{{ rocm_version }}"
+        state: present
+        update_cache: true
+
+    - name: Add the render/video group for GPU access
+      ansible.builtin.user:
+        name: "{{ ansible_user_id }}"
+        groups: render,video
+        append: true
+
+    - name: List GPUs
+      ansible.builtin.command: rocm-smi --showproductname --json
+      register: rocm_gpus
+      changed_when: false
+
+    - name: Assert exactly 8 GPUs are visible
+      ansible.builtin.assert:
+        that: (rocm_gpus.stdout | from_json).card.length | default(0) == 8
+        fail_msg: "Expected 8 GPUs. Output: {{ rocm_gpus.stdout }}"
+
+# ------------------------------------------------------------------ INTEL
+- name: Intel D270 pilot setup
+  when: gpu_vendor == "intel"
+  block:
+    - name: Mark the SUT as pilot phase
+      ansible.builtin.debug:
+        msg: >-
+          SUT-7 (D270) is pilot-phase hardware (spec 01.1).
+          Driver install is manual until GA tooling exists.
+          Record the driver source and version by hand in the
+          environment record.
+
+    - name: Check whether xpu-smi exists
+      ansible.builtin.command: which xpu-smi
+      register: xpu_smi
+      failed_when: false
+      changed_when: false
+
+    - name: Report missing telemetry tooling
+      when: xpu_smi.rc != 0
+      ansible.builtin.debug:
+        msg: >-
+          xpu-smi not found. Power metrics M16 to M19 report N/A
+          (spec 06.6.4). Continue only with the manual runbook.
