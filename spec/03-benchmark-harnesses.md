@@ -42,12 +42,24 @@ Fix these settings for both harnesses:
 |---|---|
 | Requests per run | 1 000 per concurrency point. Production lanes: PF-7 200, PF-8 100, PF-9 30 (spec 04). |
 | Payload source | The profile corpus file (spec 04.2). The harness does not generate prompts. |
-| Request distribution | Constant concurrency (open-loop optional lane, marked OPEN). |
+| Request distribution | Closed-loop: constant concurrency. Open-loop: the OPEN lane below. |
 | Concurrency values | 1, 2, 4, 8, 16, 32, 64, 128, 256. |
 | Warmup before measure | 100 requests or 60 s, whichever is longer. |
 | Timeout per request | 300 s. Production lanes PF-8 and PF-9 use 3 600 s. |
 | Retry on network error | None. Drop the request, count it as a failure. |
 | Random seed | Fixed per campaign, recorded. |
+
+Open-loop lane (OPEN):
+1. The OPEN lane sends requests at a fixed rate with Poisson arrivals.
+2. Run the OPEN lane on the Tier 2 headline test points (TP3, TP5).
+3. The OPEN lane reuses the concurrency value list as request rates
+   (1, 2, 4, ... 256 requests per second).
+4. Harness A drives the OPEN lane (Poisson profile). Harness B stays
+   closed-loop at this version pin.
+5. Mark every OPEN row OPEN. Closed-loop concurrency holds the queue
+   inside the client, so latency under load reads low. The OPEN lane
+   shows the queueing cost.
+6. Never compare closed-loop rows with OPEN rows in one table.
 
 GuideLLM specific:
 - Profile: sweep for the throughput point, constant concurrency for the latency points.

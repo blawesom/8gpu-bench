@@ -68,6 +68,22 @@ A stack-specific override requires a recorded reason.
 | Speculative decoding | Disabled by default. One optional lane with the model-native method (MTP/DSpark or EAGLE) enabled, marked SPEC. |
 | Engine build (TensorRT-LLM only) | FP8, max batch 256, context per spec 04. |
 
+### 4.1 Configuration lanes
+
+| Lane | Config | Use |
+|---|---|---|
+| CFG-BASE | The baseline table above. | Headline lane. Every SUT and stack reports it. |
+| CFG-TUNED | The best-known configuration for this stack on this SUT: vendor recipes, DP attention, expert parallelism, custom kernels. | Tuned lane. Shows the stack at its best. |
+
+Rules:
+1. Record the full CFG-TUNED server settings in the environment record.
+2. Flag every CFG-TUNED row TUNED.
+3. Never compare CFG-BASE with CFG-TUNED rows in one table.
+4. CFG-TUNED runs the same payload profiles, request counts and
+   concurrency list as CFG-BASE. Only the server configuration changes.
+5. The baseline still runs first. A CFG-TUNED result without the
+   matching CFG-BASE result is incomplete.
+
 ## 5. Support matrix (expected, verify in pilot)
 
 | Stack | SUT-1 H200 | SUT-2 B300 | SUT-3 RTX6000 | SUT-4 MI300X | SUT-5 MI355X | SUT-6 MI450 | SUT-7 D270 |

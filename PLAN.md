@@ -136,7 +136,10 @@ All documents use the ASD-STE100 standard (Simplified Technical English).
     Context cap set to 256k (spec 04.2.1). Corpus sources selected
     (spec 04.2.2): PG-19 for long session history, WildChat-1M for
     chat distribution and turn text (ODC-BY, LMSYS fallback is
-    recipe-only), FineWeb for filler text.
+    recipe-only). Updated November 2026: WildChat turn text now also
+    feeds PF-1 to PF-5 (spec 04.2.2 rule 12). FineWeb is a fallback.
+    Confirm the corpus file schema of both harnesses at the version
+    pin.
 12. Infra pins at Phase 2 (infra/ansible): exact driver versions
     per vendor, jointly with the container digests (the driver must
     match what the pinned images expect). Verify the AMD GPU count

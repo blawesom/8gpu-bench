@@ -20,6 +20,7 @@ A request meets the SLO (spec 06.4) if both M1 and M2 meet their limits.
 | M6 | Total throughput | tokens/s | (Input tokens + output tokens) of the run divided by run time. |
 | M7 | Per-request rate | req/s | Completed requests divided by run time. |
 | M8 | Per-GPU output throughput | tokens/s/GPU | M5 divided by the number of active GPUs. |
+| M24 | Request success rate | % | Requests completed without error or timeout, divided by total requests. Equals 100 minus the V1 error rate (spec 05.7). |
 
 M5 and M8 are the headline throughput metrics.
 Report M5 and M8 for every test point.
@@ -34,9 +35,14 @@ Report M6 and M7 for the W-OFF test points.
 Compute M9 for Tier 2 models where both runs exist.
 M9 shows the cost of splitting the model across GPUs.
 
-## 4. SLO and goodput
+## 4. SLO and goodput (secondary)
 
-SLO (ratified for the campaign, November 2026):
+The campaign headline is the delivery view: success rate (M24),
+latency (M1 to M4) and throughput (M5 to M8). The SLO view below is
+secondary. It condenses the delivery metrics into one pass/fail
+statement for readers who need it.
+
+SLO (reference values, November 2026):
 
 | Limit | Value |
 |---|---|
@@ -48,8 +54,8 @@ SLO (ratified for the campaign, November 2026):
 | M10 | Goodput | tokens/s | Output throughput at the highest concurrency where the SLO holds. |
 | M11 | SLO concurrency | requests | The concurrency value where the SLO last held. |
 
-Report M10 and M11 from Harness A (GuideLLM computes them directly).
-Report the Harness B numbers that sit behind them.
+Report M10 and M11 only where they are computed (Harness A).
+They are secondary. Never use them as the only comparison basis.
 
 ## 5. Resource metrics
 
@@ -100,7 +106,9 @@ Price changes. Do not rank systems on M21 alone.
 
 ## 9. Headline table metrics
 
-The headline comparison table (spec 07.2) carries:
-M5, M8, M10, M11, M1, M2 (at SLO concurrency), M15, M18.
-The production-lane table carries: M5, M8, M1, M2, M22, M23.
+The headline comparison table (spec 07.3) carries, at the highest
+measured concurrency:
+M5, M8, M24, M1, M2, M3, M4 (p90), M15, M18.
+The production-lane table carries: M5, M8, M24, M1, M2, M22, M23.
+M10 and M11 (spec 06.4) stay in the full result file only.
 All other metrics live in the full result file.

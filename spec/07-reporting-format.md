@@ -35,10 +35,12 @@ One row per (test point, harness, repetition).
 | model | gpt-oss-120b | spec 04 |
 | model_revision | hf commit SHA | Environment record |
 | precision | MXFP4 | spec 04 |
+| lane | BASE / TUNED | spec 02.4.1 |
 | tp | 8 | Test point |
 | payload_profile | PF-1 ... PF-5 | spec 04 |
 | prompt_scenario | PU / PS | spec 04 |
 | regime | WON / WOFF | spec 04 |
+| traffic_mode | closed / open | spec 03.3 |
 | concurrency | 128 | Test point |
 | repetition | 1..3 | spec 05.3 |
 | ttft_ms_p90 | 412 | M1 |
@@ -47,14 +49,15 @@ One row per (test point, harness, repetition).
 | e2e_ms_p90 | 38 120 | M4 |
 | out_tps | 5 421 | M5 |
 | out_tps_per_gpu | 678 | M8 |
-| goodput_tps | 4 980 | M10 |
-| slo_concurrency | 128 | M11 |
+| goodput_tps | 4 980 | M10 (secondary) |
+| slo_concurrency | 128 | M11 (secondary) |
 | hbm_peak_gb | 241 | M12 |
 | gpu_util_pct | 99.2 | M14 |
 | temp_max_c | 63 | M15 |
 | power_mean_w | 7 410 | M16 |
 | j_per_1m_out | 682 000 | M18 |
-| flags | PILOT, DEV, SPEC, INVALID | spec 01/05 |
+| success_rate_pct | 100.0 | M24 |
+| flags | PILOT, DEV, SPEC, TUNED, OPEN, INVALID | spec 01/02/03/05 |
 | deviation_note | Text, or blank | spec 05.5 |
 | error_rate_pct | 0.0 | V1 |
 | cov_pct | 1.8 | V3 |
@@ -62,16 +65,24 @@ One row per (test point, harness, repetition).
 ## 3. Headlines tables
 
 Build one table per model and per regime.
-Rows: SUT x stack. Columns: the headline metrics (spec 06.8).
+Rows: SUT x stack, at the highest measured concurrency.
+Columns: the headline metrics (spec 06.9): M5, M8, M24, M1 to M4
+(p90), M15, M18.
 Sort: by M5 (out_tps) descending.
 Flags print inline (for example: "678 (PILOT)").
 
+Rules:
+1. Never mix CFG-BASE and CFG-TUNED rows in one table (spec 02.4.1).
+2. Never mix closed-loop and OPEN rows in one table (spec 03.3).
+3. The SLO view (M10, M11) is secondary (spec 06.4). It does not
+   select the headline row.
+
 Example shape (values are illustrative):
 
-| SUT | Stack | out_tps | out_tps/gpu | goodput | TTFT p90 @SLO | TPOT p90 @SLO | J/1M out |
-|---|---|---|---|---|---|---|---|
-| SUT-1 | vllm | 12 800 | 1 600 | 11 900 | 980 ms | 49 ms | 610 000 |
-| SUT-4 | vllm | 10 100 | 1 263 | 9 200 | 1 000 ms | 47 ms | 730 000 |
+| SUT | Stack | out_tps | out_tps/gpu | success | TTFT p90 | TPOT p90 | E2E p90 | J/1M out |
+|---|---|---|---|---|---|---|---|---|
+| SUT-1 | vllm | 12 800 | 1 600 | 100.0% | 980 ms | 49 ms | 51 200 ms | 610 000 |
+| SUT-4 | vllm | 10 100 | 1 263 | 99.8% | 1 050 ms | 47 ms | 49 400 ms | 730 000 |
 
 ## 4. Environment record (meta.json)
 

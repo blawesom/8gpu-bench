@@ -205,15 +205,20 @@ request holds the prompt text, the target ISL, and the target OSL.
     session corpus. Record the value with the corpus. The run validity
     check compares it with the server metric (rule 5.6).
 12. Source text (selected, November 2026):
-    - Filler text for PF-1 to PF-5: FineWeb (HuggingFaceFW/fineweb),
-      length-filtered sample. License: ODC-BY.
+    - Prompt text for PF-1 to PF-5: WildChat-1M (allenai/WildChat-1M)
+      turns. Real chat text keeps the content-dependent behavior
+      realistic: speculative-decoding acceptance and early stop.
+      License: ODC-BY.
     - Long session history for PF-7 to PF-9: PG-19 (deepmind/pg19),
       Project Gutenberg books. The books are public domain. One book
       gives 30 000 to 200 000 tokens of stable text.
     - New-turn text for sessions: WildChat-1M user turns. License: ODC-BY.
     - For each source, record the dataset revision, the sample seed,
       and the sampling rule.
-13. Attribution: FineWeb and WildChat-1M carry the ODC-BY license.
+    - FineWeb (HuggingFaceFW/fineweb) is a fallback source. The
+      generator does not fetch it by default. A corpus that uses it
+      records the switch.
+13. Attribution: WildChat-1M carries the ODC-BY license.
     The generator writes the source name, the revision, and the
     attribution text in the header of each corpus file.
 

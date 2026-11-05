@@ -10,23 +10,27 @@ A test point is one combination of:
 - SUT (spec 01)
 - Stack and version (spec 02)
 - Model and revision (spec 04)
-- Payload profile PF-1 to PF-5 (spec 04)
-- Prompt scenario P-U or P-S
+- Payload profile PF-1 to PF-9 (spec 04)
+- Prompt scenario P-U, P-S, or P-C (spec 04)
 - Traffic regime W-ON or W-OFF
 - Concurrency value (for W-ON)
 
 ## 2. Order of runs
 
-Run test points in this order:
+Run test points in this order (TP definitions in spec 04.4):
 
-1. All TP1 points on a SUT (Tier 1, one GPU).
-2. All TP2 to TP5 points (Tier 2, eight GPUs).
+1. All TP1 and TP2 points (Tier 1, one GPU).
+2. All TP3 to TP5 points (Tier 2 headline, eight GPUs).
 3. All TP6 points (shared prefix).
-4. Cross-checks (spec 03.1) after the primary results.
-5. Extended-set stacks after the core set finishes on the SUT.
+4. All TP7 to TP9 points (secondary lanes).
+5. All TP10 to TP12 points (production lanes). Run them last.
+6. Cross-checks (spec 03.1) after the primary results.
+7. Extended-set stacks after the core set finishes on the SUT.
 
 Rationale: the one-GPU tests are the fastest feedback loop.
 They catch setup errors before the long eight-GPU runs.
+The production lanes run last because they hold the context
+for a long time.
 
 ## 3. Procedure per test point
 
@@ -34,18 +38,24 @@ They catch setup errors before the long eight-GPU runs.
 2. Start the server with the pinned stack version.
 3. Wait for the health endpoint to pass.
 4. Capture the server startup log and settings.
-5. Run the warmup (spec 03.3).
+5. Run the warmup (spec 03.3). One warmup per server start.
 6. Start power sampling (spec 06.7).
-7. Run the measured load with Harness A. Save the output.
+7. Run the measured load with Harness A for every concurrency value
+   of the test point, in ascending order. Save the output of every
+   value.
 8. Stop the server. Confirm the GPUs release.
 9. Start the server again with the same settings.
 10. Repeat steps 5 to 8 with Harness B.
 11. Stop power sampling. Save the power trace.
-12. Write the result row (spec 07).
+12. Write one result row per concurrency value (spec 07).
 13. Repeat the full sequence for two more repetitions.
 
+The server restarts once per harness, not once per concurrency
+value. This bounds the model-load cost of a campaign. A failed pass
+restarts the server and retries once (spec 04.5 rule 4). The sweep
+then continues with the next value.
 Use the median of the three repetitions for the headline result.
-Keep all three raw outputs.
+Keep all raw outputs.
 
 ## 4. Pinned variables (do not change between SUTs)
 
@@ -54,9 +64,9 @@ Keep all three raw outputs.
 | Sampling | Greedy, temperature 0. |
 | Concurrency list | 1, 2, 4, 8, 16, 32, 64, 128, 256. |
 | Requests per run | 1 000 (plus warmup). |
-| Payload profiles | PF-1 to PF-5 (spec 04.2). |
+| Payload profiles | PF-1 to PF-9 (spec 04.2). |
 | Prompt seed | Fixed per campaign. |
-| Server config | spec 02.4 baseline. |
+| Server config | CFG-BASE lane (spec 02.4). CFG-TUNED is a separate lane. |
 | Client machine | One machine for the whole campaign. |
 | Network path | 25 GbE or faster, dedicated. |
 | GPU count and TP | Per test point (spec 04.4). |
@@ -106,13 +116,18 @@ Two consecutive INVALID results stop the SUT campaign. Escalate.
 State the logic that makes results comparable:
 
 1. Same client measures every stack, so client cost is constant.
-2. Same harness pair on every stack, so the two results are independent views of one run.
+2. Same harness pair on every stack, so the two results are two
+   independent measurements of one test point. Each harness sees its
+   own server instance: the procedure restarts the server between
+   Harness A and Harness B (spec 05.3).
 3. Same model revision, precision, and payload profile on every SUT.
-4. Same server baseline config, so vendor-tuned defaults do not shift the result.
+4. Same server baseline config, so vendor-tuned defaults do not shift
+   the result. The CFG-TUNED lane (spec 02.4.1) is reported apart.
 5. Unique-prompt scenario with cache control, so prefix reuse cannot hide or create speed.
 6. Median of 3 repetitions with a CoV gate, so noise does not pass as signal.
 7. Full environment record, so any row can be re-checked or re-run.
 
 When comparing two rows, check that these fields match:
-model revision, precision, payload profile, scenario, regime, concurrency, TP, and deviation flags.
+model revision, precision, payload profile, scenario, regime,
+concurrency, TP, config lane, traffic mode, and deviation flags.
 If a field does not match, do not compare the two rows.
