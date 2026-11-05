@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""8gpu-bench test-point runner. Implements the spec 05.3 procedure.
+"""8gpu-bench test-point runner. Implements the spec 05.3 procedure
+(benchmark spec 1.1.0).
 
 One run manifest declares one stack on one SUT. The runner executes
 every test point in it. Per repetition of every test point it runs
-the spec 05.3 sequence: server start, health wait, one warmup, the
-primary harness (GuideLLM) sweeps every concurrency value in
-ascending order, server stop. One server start per test point and
+the spec 05.3 sequence: server start, health wait, one warmup, a
+60 s thermal soak, then the primary harness (GuideLLM) sweeps every
+concurrency value in a seeded random order (spec 05.2.1), with a
+15 s soak between passes. One server start per test point and
 repetition.
 
 The harness is a fixed instrument (spec 03.1): every stack, SUT and
@@ -13,11 +15,23 @@ configuration lane is measured with the same tool. Cross-check tools
 (genai-perf) run only with --cross-check, after the primary results,
 and their records carry the CROSSCHECK flag.
 
+Reference points (spec 05.2.2): when the manifest carries a
+`reference` block, the runner executes that point before the first
+test point, after every `reference_every` test points, and after the
+last one. Reference records carry the REFERENCE flag and feed the V8
+drift check of build-results.py.
+
+The manifest declares the comparability category of every row
+(spec 04.1.6): STRICT, ARCH, or HWBEST. The runner records the
+benchmark versions from the repository VERSION file in every
+meta.json (spec 00.3.5).
+
 Usage:
   run-benchmark.py --config runs/example-nvidia.yaml --corpora corpora \\
       --out results/2026Q4
   run-benchmark.py --config ... --telemetry /mnt/sut1/gpu-telemetry
   run-benchmark.py --config ... --cross-check   # after primary results
+  run-benchmark.py selftest
 
 Output layout per test point and repetition (spec 07.1):
   <out>/<run_id_prefix>/<profile>-<scenario>-<regime>-r<r>/
@@ -27,7 +41,8 @@ Output layout per test point and repetition (spec 07.1):
     guidellm/C<c>/            primary harness raw output, one dir per pass
     crosscheck-genai-perf/C<c>/  cross-check output (--cross-check only)
   <out>/runs.jsonl     one record per (test point, harness, value,
-                       repetition)
+                       repetition). Multiple manifests of one
+                       campaign append to the same runs.jsonl.
 
 Validity handling (spec 05.7, spec 04.5):
   - Failed server starts, failed warmups and failed harness runs
@@ -37,7 +52,8 @@ Validity handling (spec 05.7, spec 04.5):
   - Two consecutive INVALID results stop the campaign (spec 05.7).
   - V1 (error rate), V5 (power coverage), V6 (record completeness)
     and V7 (thermal events) are checked where data is available.
-    V3 (CoV) is computed by build-results.py across repetitions.
+    V3 (CoV), V8 (drift) and V9 (comparability) are computed by
+    build-results.py.
 
 Adapter status (verified against the upstream docs, Nov 2026):
   GuideLLM adapter: matches the documented 0.7.x CLI
@@ -55,6 +71,7 @@ import csv
 import datetime
 import json
 import os
+import random
 import shlex
 import subprocess
 import sys
@@ -62,7 +79,49 @@ import time
 import urllib.error
 import urllib.request
 
-TOOL_VERSION = "1.1.0"
+TOOL_VERSION = "1.2.0"
+
+# Thermal soak (spec 05.3 step 6): 60 s after the warmup, 15 s
+# between measured passes.
+SOAK_AFTER_WARMUP_S = 60
+SOAK_BETWEEN_PASSES_S = 15
+
+# Repetition defaults (spec 05.4): 5 for core test points, 7 for the
+# Tier 2 headline points. The manifest sets the per-manifest count.
+DEFAULT_REPETITIONS = 5
+
+# Reference point schedule (spec 05.2.2).
+DEFAULT_REFERENCE_EVERY = 10
+DEFAULT_REFERENCE = dict(profile="PF-1", scenario="P-U", regime="W-ON",
+                         concurrency=[32], requests=200,
+                         warmup_requests=50)
+
+COMPARABILITY_CATEGORIES = ("STRICT", "ARCH", "HWBEST")
+
+
+def load_versions() -> dict:
+    """Read the VERSION file next to the repository root (spec 00.3.5)."""
+    versions = {
+        "benchmark_spec": "1.1.0",
+        "runner_version": "1.2.0",
+        "assembler_version": "1.2.0",
+        "corpus_version": "1.0.0",
+        "result_schema_version": "1.0.0",
+    }
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        os.pardir, "VERSION")
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                key, _, value = line.partition("=")
+                if key and value:
+                    versions[key.strip()] = value.strip()
+    except OSError:
+        pass
+    return versions
 
 # Request timeout per payload profile (spec 03.3). Production lanes
 # PF-8 and PF-9 use 3600 s because one request can hold a 50 000-token
@@ -192,6 +251,46 @@ def parse_iso8601(value: str) -> float | None:
 
 
 # ---------------------------------------------------------------------------
+# Value order and campaign schedule (spec 05.2)
+# ---------------------------------------------------------------------------
+
+
+def shuffled_values(seed: int, key: str, values: list) -> list:
+    """Seeded random order of the sweep values (spec 05.2.1).
+
+    Deterministic: the same (seed, key) always gives the same order,
+    so a re-run of a stopped campaign reuses the recorded order.
+    """
+    rng = random.Random(f"8gpu-bench:{seed}:{key}")
+    order = list(values)
+    rng.shuffle(order)
+    return order
+
+
+def sweep_key(cfg: dict, point: dict, mode: str, repetition: int) -> str:
+    return (f"{cfg.get('run_id_prefix', '')}/{point['profile']}/"
+            f"{point['scenario']}/{point['regime']}/{mode}/r{repetition}")
+
+
+def plan_schedule(test_points: list, has_reference: bool,
+                  every: int) -> list[tuple]:
+    """The campaign step list (spec 05.2.2): test points in manifest
+    order with reference points before the first, after every
+    `every` points (except after the last), and after the last."""
+    steps: list[tuple] = []
+    if has_reference:
+        steps.append(("reference", "start"))
+    count = len(test_points)
+    for i in range(1, count + 1):
+        steps.append(("test-point", i))
+        if has_reference and i < count and i % every == 0:
+            steps.append(("reference", f"mid{i}"))
+    if has_reference:
+        steps.append(("reference", "end"))
+    return steps
+
+
+# ---------------------------------------------------------------------------
 # Server lifecycle (cross-vendor, spec 05.3 steps 2 to 4 and 8)
 # ---------------------------------------------------------------------------
 
@@ -304,7 +403,7 @@ class Server:
 def guidellm_command(cfg: dict, corpus: str, concurrency: int,
                      requests: int, out_prefix: str,
                      mode: str = "closed") -> list[str]:
-    """Harness A. GuideLLM 0.7.x CLI shape.
+    """Primary harness. GuideLLM 0.7.x CLI shape.
 
     PILOT-VERIFY: the json_file dataset schema at the version pin.
     GuideLLM reports goodput directly (spec 06.4).
@@ -331,14 +430,14 @@ def guidellm_command(cfg: dict, corpus: str, concurrency: int,
 def genai_perf_command(cfg: dict, corpus: str, concurrency: int,
                        requests: int, out_prefix: str,
                        mode: str = "closed") -> list[str]:
-    """Harness B. GenAI-Perf CLI shape.
+    """Cross-check harness. GenAI-Perf CLI shape.
 
     PILOT-VERIFY: the --input-file payload schema at the version pin.
     -m and --tokenizer are required for token-based metrics.
     --streaming is a flag; --endpoint-type selects the API shape.
-    The OPEN lane does not run on Harness B (spec 03.3).
+    The OPEN lane does not run on the cross-check harness (spec 03.3).
     """
-    assert mode == "closed", "Harness B runs closed-loop only (spec 03.3)"
+    assert mode == "closed", "the cross-check harness runs closed-loop only (spec 03.3)"
     return [
         cfg["client"]["genai_perf"], "profile",
         "--service-kind", "openai",
@@ -507,6 +606,7 @@ def slice_telemetry(telemetry_dir: str, t0: float, t1: float,
     stamps: set[int] = set()
     powers: list[float] = []
     temps: list[float] = []
+    temp_order: list[float] = []
     mems: list[float] = []
     utils: list[float] = []
     out_rows: list[list[str]] = []
@@ -521,12 +621,14 @@ def slice_telemetry(telemetry_dir: str, t0: float, t1: float,
                         continue
                     try:
                         powers.append(float(row[2]))
-                        temps.append(float(row[3]))
+                        temp = float(row[3])
+                        temps.append(temp)
                         mems.append(float(row[4]))
                         utils.append(float(row[5]))
                     except ValueError:
                         continue
                     stamps.add(int(ts))
+                    temp_order.append(temp)
                     out_rows.append(row)
         except OSError:
             continue
@@ -539,6 +641,8 @@ def slice_telemetry(telemetry_dir: str, t0: float, t1: float,
     return dict(
         power_mean_w=round(sum(powers) / len(powers), 1),
         temp_max_c=round(max(temps), 1),
+        temp_first_c=round(temp_order[0], 1),
+        temp_last_c=round(temp_order[-1], 1),
         hbm_peak_gb=round(max(mems) / 1024.0, 1),
         gpu_util_pct=round(sum(utils) / len(utils), 1),
         power_coverage_pct=round(100.0 * len(stamps) / duration, 1),
@@ -597,7 +701,9 @@ def warmup(url: str, model: str, rows: list[dict], target: int,
 
 
 def base_record(cfg: dict, point: dict, harness: str, c: int,
-                repetition: int, run_dir: str) -> dict:
+                repetition: int, run_dir: str,
+                extra_flags: list | None = None,
+                value_order: int | None = None) -> dict:
     lane = str(cfg.get("lane", "BASE")).upper()
     mode = str(point.get("mode", "closed")).lower()
     tag = f"R{c}" if mode == "open" else f"C{c}"
@@ -610,15 +716,20 @@ def base_record(cfg: dict, point: dict, harness: str, c: int,
         sut=cfg["sut"], stack=cfg["stack"],
         stack_version=cfg["stack_version"], harness=harness,
         model=cfg["model"], model_revision=cfg.get("model_revision"),
-        precision=cfg.get("precision"), config_lane=lane,
+        precision=cfg.get("precision"),
+        comparability=cfg.get("comparability", ""),
+        config_lane=lane,
         tp=cfg.get("tp"),
         payload_profile=point["profile"],
         prompt_scenario=point["scenario"], regime=point["regime"],
         traffic_mode=mode, concurrency=c, repetition=repetition,
+        value_order=value_order if value_order is not None else "",
+        order_seed=cfg.get("seed", 42),
         run_dir=run_dir, raw_dir=raw_dir, metrics={},
         flags=list(cfg.get("flags", [])) + (["TUNED"] if lane == "TUNED" else [])
         + (["OPEN"] if mode == "open" else [])
-        + ([] if primary else ["CROSSCHECK"]),
+        + ([] if primary else ["CROSSCHECK"])
+        + list(extra_flags or []),
         run_started_at=now_utc(), generated_at=now_utc(),
     )
     os.makedirs(raw_dir, exist_ok=True)
@@ -642,7 +753,8 @@ def append_record(out_root: str, record: dict) -> None:
 def run_measured(cfg: dict, point: dict, corpus: str, run_dir: str,
                  harness: str, c: int, repetition: int,
                  telemetry_dir: str | None, mode: str,
-                 server: Server) -> dict:
+                 server: Server, value_order: int | None = None,
+                 extra_flags: list | None = None) -> dict:
     """One measured pass: harness run, extraction, validity checks.
 
     The server is already running and warmed up (sweep_harness).
@@ -650,7 +762,8 @@ def run_measured(cfg: dict, point: dict, corpus: str, run_dir: str,
     result is silently dropped (spec 00, spec 05.7).
     """
     tag = f"R{c}" if mode == "open" else f"C{c}"
-    record = base_record(cfg, point, harness, c, repetition, run_dir)
+    record = base_record(cfg, point, harness, c, repetition, run_dir,
+                         extra_flags=extra_flags, value_order=value_order)
     raw_dir = record["raw_dir"]
 
     # Step 7 / step 10: measured run with the harness.
@@ -680,13 +793,17 @@ def run_measured(cfg: dict, point: dict, corpus: str, run_dir: str,
         record["metrics"] = metrics
         return record
 
-    # Telemetry join (M12 to M16) and V5 coverage check.
+    # Telemetry join (M12 to M16) and V5 coverage check. The GPU
+    # temperature at the start and end of the pass is recorded for
+    # the thermal-soak audit (spec 05.3 step 6).
     if telemetry_dir:
         tele = slice_telemetry(
             telemetry_dir, t0, t1,
             os.path.join(run_dir, f"power-{HARNESS_DIRS[harness]}-{tag}.csv"))
         if tele:
             metrics.update(tele)
+            record["temp_start_c"] = tele["temp_first_c"]
+            record["temp_end_c"] = tele["temp_last_c"]
             if tele["power_coverage_pct"] < MIN_POWER_COVERAGE_PCT:
                 record["flags"] += ["INVALID", "POWER-COVERAGE"]
 
@@ -702,10 +819,12 @@ def run_measured(cfg: dict, point: dict, corpus: str, run_dir: str,
 def sweep_harness(cfg: dict, point: dict, corpus: str, run_dir: str,
                   harness: str, values: list, repetition: int,
                   telemetry_dir: str | None, mode: str,
-                  server: Server) -> list[dict]:
+                  server: Server, order: list | None = None,
+                  extra_flags: list | None = None) -> list[dict]:
     """One server lifecycle for the whole sweep of one harness
-    (spec 05.3): start, health wait, one warmup, then every
-    concurrency value in ascending order.
+    (spec 05.3): start, health wait, one warmup, a 60 s thermal soak,
+    then every concurrency value in the given order (randomized per
+    spec 05.2.1), with a 15 s soak between passes.
 
     On a failed pass, restart the server and retry the value once
     (spec 04.5 rule 4). A failure that persists produces one INVALID
@@ -716,7 +835,11 @@ def sweep_harness(cfg: dict, point: dict, corpus: str, run_dir: str,
     corpus_rows = read_corpus_requests(corpus)
     records: list[dict] = []
 
-    for c in sorted(values):
+    for idx, c in enumerate(order if order is not None else values):
+        # Soak between measured passes (spec 05.3 step 6).
+        if idx > 0:
+            print(f"soak {SOAK_BETWEEN_PASSES_S} s before {c}", flush=True)
+            time.sleep(SOAK_BETWEEN_PASSES_S)
         record: dict | None = None
         for attempt in (1, 2):
             # Start and warm up when the server is not running:
@@ -728,7 +851,9 @@ def sweep_harness(cfg: dict, point: dict, corpus: str, run_dir: str,
                               flush=True)
                         continue
                     record = base_record(cfg, point, harness, c,
-                                         repetition, run_dir)
+                                         repetition, run_dir,
+                                         extra_flags=extra_flags,
+                                         value_order=idx + 1)
                     record["flags"] += ["INVALID", "SERVER-START"]
                     record["run_finished_at"] = now_utc()
                     break
@@ -744,12 +869,21 @@ def sweep_harness(cfg: dict, point: dict, corpus: str, run_dir: str,
                               flush=True)
                         continue
                     record = base_record(cfg, point, harness, c,
-                                         repetition, run_dir)
+                                         repetition, run_dir,
+                                         extra_flags=extra_flags,
+                                         value_order=idx + 1)
                     record["flags"] += ["INVALID", "WARMUP"]
                     record["run_finished_at"] = now_utc()
                     break
+                # Thermal soak after the warmup, before the first
+                # measured pass (spec 05.3 step 6).
+                print(f"soak {SOAK_AFTER_WARMUP_S} s after warmup",
+                      flush=True)
+                time.sleep(SOAK_AFTER_WARMUP_S)
             record = run_measured(cfg, point, corpus, run_dir, harness, c,
-                                  repetition, telemetry_dir, mode, server)
+                                  repetition, telemetry_dir, mode, server,
+                                  value_order=idx + 1,
+                                  extra_flags=extra_flags)
             if "INVALID" not in record["flags"] or attempt == 2:
                 break
             # The server may have died mid-pass. Restart for the retry.
@@ -762,12 +896,27 @@ def sweep_harness(cfg: dict, point: dict, corpus: str, run_dir: str,
 
 
 def write_run_meta(run_dir: str, cfg: dict, point: dict, corpus: str,
-                   digest: str, passes: list[dict], mode: str = "closed") -> None:
+                   digest: str, passes: list[dict], mode: str = "closed",
+                   value_order: list | None = None) -> None:
     """Per-run environment record (spec 07.4).
 
     The node-level fields (OS, driver, BIOS) come from the Ansible
-    env-record role. This file adds the run-level fields.
+    env-record role. This file adds the run-level fields, including
+    the benchmark versions (spec 00.3.5), the comparability category
+    (spec 04.1.6), the sweep order (spec 05.2.1) and the thermal
+    soak settings (spec 05.3 step 6).
     """
+    harnesses: dict[str, list[dict]] = {}
+    for p in passes:
+        harnesses.setdefault(p["harness"], []).append(dict(
+            concurrency=p.get("concurrency"),
+            value_order=p.get("value_order", ""),
+            exit_code=p.get("exit_code"),
+            run_window_s=p.get("run_window_s"),
+            temp_start_c=p.get("temp_start_c", ""),
+            temp_end_c=p.get("temp_end_c", ""),
+            command=p.get("command", ""),
+        ))
     meta = dict(
         run_id=f"{cfg['run_id_prefix']}-{point['profile']}-{point['scenario']}"
                f"-{point['regime']}",
@@ -775,6 +924,7 @@ def write_run_meta(run_dir: str, cfg: dict, point: dict, corpus: str,
         sut=cfg["sut"], stack=cfg["stack"],
         stack_version=cfg["stack_version"],
         config_lane=str(cfg.get("lane", "BASE")).upper(),
+        comparability=cfg.get("comparability", ""),
         traffic_mode=str(mode).lower(),
         image=cfg["server"]["image"],
         image_digest=digest,
@@ -785,10 +935,12 @@ def write_run_meta(run_dir: str, cfg: dict, point: dict, corpus: str,
         server_settings=cfg["server"].get("args", ""),
         corpus_path=os.path.abspath(corpus),
         corpus_sha256=corpus_sha256(corpus),
-        harnesses={p["harness"]: dict(
-            command=p.get("command", ""), exit_code=p.get("exit_code"),
-            run_window_s=p.get("run_window_s"),
-        ) for p in passes},
+        order_seed=cfg.get("seed", 42),
+        value_order=list(value_order) if value_order is not None else [],
+        soak_s=dict(after_warmup=SOAK_AFTER_WARMUP_S,
+                    between_passes=SOAK_BETWEEN_PASSES_S),
+        harnesses=harnesses,
+        versions=load_versions(),
         tool_version=TOOL_VERSION,
         generated_at=now_utc(),
     )
@@ -807,7 +959,9 @@ def write_run_meta(run_dir: str, cfg: dict, point: dict, corpus: str,
 def run_test_point(cfg: dict, point: dict, corpora_root: str, out_root: str,
                    harness_filter: str | None, repetition: int,
                    telemetry_dir: str | None,
-                   cross_check: bool = False) -> list[dict]:
+                   cross_check: bool = False,
+                   extra_flags: list | None = None,
+                   run_suffix: str = "") -> list[dict]:
     profile = point["profile"]
     model_dir = cfg["model"].replace("/", "_")
     corpus = os.path.join(corpora_root, model_dir, f"{profile}.jsonl")
@@ -833,15 +987,25 @@ def run_test_point(cfg: dict, point: dict, corpora_root: str, out_root: str,
     # One run directory per test point and repetition. Every harness
     # sweep and every concurrency value lives inside it (spec 07.1).
     # The traffic mode is part of the name: the OPEN lane is a
-    # separate test point and must not share the directory.
+    # separate test point and must not share the directory. Reference
+    # runs (spec 05.2.2) carry their label in the name.
     run_dir = os.path.join(
         out_root, cfg["run_id_prefix"],
         f"{profile}-{point['scenario']}-{point['regime']}"
         + ("-OPEN" if mode == "open" else "")
+        + (f"-{run_suffix}" if run_suffix else "")
         + f"-r{repetition}")
     os.makedirs(run_dir, exist_ok=True)
     server = Server(cfg["server"], run_dir)
     digest = server.image_digest()
+
+    # Seeded random value order, re-shuffled per repetition
+    # (spec 05.2.1). The same (seed, key) re-shuffles identically,
+    # so a re-run of a stopped campaign reuses the recorded order.
+    order = shuffled_values(cfg.get("seed", 42),
+                            sweep_key(cfg, point, mode, repetition),
+                            values)
+    print(f"value order: {order}", flush=True)
 
     records: list[dict] = []
     # One server lifecycle per harness sweep: the primary harness
@@ -849,8 +1013,10 @@ def run_test_point(cfg: dict, point: dict, corpora_root: str, out_root: str,
     for harness in harnesses:
         records += sweep_harness(cfg, point, corpus, run_dir, harness,
                                  values, repetition, telemetry_dir,
-                                 mode, server)
-    write_run_meta(run_dir, cfg, point, corpus, digest, records, mode)
+                                 mode, server, order=order,
+                                 extra_flags=extra_flags)
+    write_run_meta(run_dir, cfg, point, corpus, digest, records, mode,
+                   value_order=order)
     return records
 
 
@@ -863,9 +1029,62 @@ def load_manifest(path: str) -> dict:
         return yaml.safe_load(fh)
 
 
+def validate_manifest(cfg: dict) -> list[str]:
+    """Built-in manifest checks (tools/schemas/manifest.schema.json is
+    the full schema; jsonschema is used when installed)."""
+    problems = []
+    for field in ("run_id_prefix", "campaign_id", "sut", "stack",
+                  "stack_version", "model", "precision", "server",
+                  "client", "test_points"):
+        if not cfg.get(field):
+            problems.append(f"missing field: {field}")
+    comparability = cfg.get("comparability")
+    if comparability not in COMPARABILITY_CATEGORIES:
+        problems.append("comparability must be one of "
+                        f"{', '.join(COMPARABILITY_CATEGORIES)} "
+                        f"(spec 04.1.6); got {comparability!r}")
+    try:
+        import jsonschema
+    except ImportError:
+        return problems
+    schema_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "schemas", "manifest.schema.json")
+    if not os.path.exists(schema_path):
+        return problems
+    with open(schema_path, "r", encoding="utf-8") as fh:
+        schema = json.load(fh)
+    try:
+        jsonschema.validate(cfg, schema)
+    except jsonschema.ValidationError as exc:
+        problems.append(f"jsonschema: {exc.message}")
+    return problems
+
+
+def run_reference(cfg: dict, corpora_root: str, out_root: str,
+                  telemetry_dir: str | None, label: str) -> list[dict]:
+    """One reference point run (spec 05.2.2). One repetition, no
+    cross-check. Records carry the REFERENCE flag."""
+    ref = {**DEFAULT_REFERENCE, **cfg.get("reference", {})}
+    point = dict(
+        profile=ref["profile"],
+        scenario=ref.get("scenario", "P-U"),
+        regime=ref.get("regime", "W-ON"),
+        concurrency=ref.get("concurrency", [32]),
+        requests=ref.get("requests", 200),
+        warmup_requests=ref.get("warmup_requests", 50),
+    )
+    print(f"=== reference point ({label}) ===", flush=True)
+    return run_test_point(cfg, point, corpora_root, out_root, None, 1,
+                          telemetry_dir, cross_check=False,
+                          extra_flags=["REFERENCE"], run_suffix=f"REF-{label}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", required=True, help="run manifest YAML")
+    sub = parser.add_subparsers(dest="cmd")
+    sub.add_parser("selftest", help="validate the scheduling and order "
+                     "logic without a server")
+    parser.add_argument("--config", default=None, help="run manifest YAML")
     parser.add_argument("--corpora", default="corpora")
     parser.add_argument("--out", default="results")
     parser.add_argument("--telemetry", default=None,
@@ -884,34 +1103,125 @@ def main() -> int:
                         help="override the manifest repetition count")
     args = parser.parse_args()
 
-    cfg = load_manifest(args.config)
-    repetitions = args.repetitions or cfg.get("repetitions", 3)
+    if args.cmd == "selftest":
+        return selftest()
+    if not args.config:
+        parser.print_help()
+        return 1
 
+    cfg = load_manifest(args.config)
+    problems = validate_manifest(cfg)
+    if problems:
+        print("manifest problems:", file=sys.stderr)
+        for p in problems:
+            print(f"  {p}", file=sys.stderr)
+        return 2
+    repetitions = args.repetitions or cfg.get(
+        "repetitions", DEFAULT_REPETITIONS)
+
+    steps = plan_schedule(cfg.get("test_points", []),
+                          "reference" in cfg,
+                          cfg.get("reference_every", DEFAULT_REFERENCE_EVERY))
     consecutive_invalid = 0
     total = 0
-    for point in cfg.get("test_points", []):
+
+    def emit(records: list[dict]) -> int:
+        nonlocal consecutive_invalid, total
+        for record in records:
+            append_record(args.out, record)
+            total += 1
+            if "INVALID" in record["flags"]:
+                consecutive_invalid += 1
+                print(f"INVALID ({consecutive_invalid} consecutive): "
+                      f"{record['run_id']} flags={record['flags']}",
+                      flush=True)
+                if consecutive_invalid >= MAX_CONSECUTIVE_INVALID:
+                    print("STOP: two consecutive INVALID results. "
+                          "The SUT campaign stops (spec 05.7). "
+                          "Fix the cause, then restart the campaign.",
+                          flush=True)
+                    return 1
+            else:
+                consecutive_invalid = 0
+        return 0
+
+    for step, index in steps:
+        if step == "reference":
+            if emit(run_reference(cfg, args.corpora, args.out,
+                                  args.telemetry, index)) == 1:
+                return 2
+            continue
+        point = cfg["test_points"][index - 1]
         for repetition in range(1, repetitions + 1):
             records = run_test_point(cfg, point, args.corpora, args.out,
                                      args.harness, repetition,
                                      args.telemetry, args.cross_check)
-            for record in records:
-                append_record(args.out, record)
-                total += 1
-                if "INVALID" in record["flags"]:
-                    consecutive_invalid += 1
-                    print(f"INVALID ({consecutive_invalid} consecutive): "
-                          f"{record['run_id']} flags={record['flags']}",
-                          flush=True)
-                    if consecutive_invalid >= MAX_CONSECUTIVE_INVALID:
-                        print("STOP: two consecutive INVALID results. "
-                              "The SUT campaign stops (spec 05.7). "
-                              "Fix the cause, then restart the campaign.",
-                              flush=True)
-                        return 2
-                else:
-                    consecutive_invalid = 0
+            if emit(records) == 1:
+                return 2
 
     print(f"wrote {total} run records to {args.out}/runs.jsonl")
+    return 0
+
+
+def selftest() -> int:
+    """Validate the order and schedule logic. No server, no docker."""
+    failures: list[str] = []
+
+    def check(name: str, cond: bool) -> None:
+        print(f"  {'ok' if cond else 'FAIL'}: {name}", flush=True)
+        if not cond:
+            failures.append(name)
+
+    values = [1, 2, 4, 8, 16, 32, 64, 128, 256]
+    key = "sut1-vllm/PF-1/P-U/W-ON/closed/r1"
+    o1 = shuffled_values(42, key, values)
+    o2 = shuffled_values(42, key, values)
+    o3 = shuffled_values(42, "sut1-vllm/PF-1/P-U/W-ON/closed/r2", values)
+    check("order is deterministic for the same key", o1 == o2)
+    check("order covers every value exactly once",
+          sorted(o1) == sorted(values))
+    check("order differs across repetitions", o1 != o3)
+
+    pts = [dict(profile="PF-1"), dict(profile="PF-2"), dict(profile="PF-3")]
+    s1 = plan_schedule(pts, True, 10)
+    check("schedule without mid points",
+          s1 == [("reference", "start"), ("test-point", 1),
+                 ("test-point", 2), ("test-point", 3),
+                 ("reference", "end")])
+    s2 = plan_schedule([dict() for _ in range(4)], True, 2)
+    check("schedule with a mid point after every 2",
+          s2 == [("reference", "start"), ("test-point", 1),
+                 ("test-point", 2), ("reference", "mid2"),
+                 ("test-point", 3), ("test-point", 4),
+                 ("reference", "end")])
+    s3 = plan_schedule(pts, False, 10)
+    check("schedule without reference",
+          s3 == [("test-point", 1), ("test-point", 2),
+                 ("test-point", 3)])
+
+    good = dict(
+        run_id_prefix="sut1-vllm", campaign_id="2026Q4", sut="SUT-1",
+        stack="vllm", stack_version="0.32.0", model="Qwen/Qwen3.8-27B",
+        precision="BF16", comparability="STRICT",
+        server=dict(image="vllm/vllm-openai:v0.32.0"),
+        client=dict(target="http://sut1:8000",
+                    guidellm="/opt/8gpu-bench/harness/venv/bin/guidellm"),
+        test_points=[dict(profile="PF-1", scenario="P-U", regime="W-ON",
+                          concurrency=[1, 32])],
+    )
+    check("valid manifest passes", validate_manifest(good) == [])
+    bad = {k: v for k, v in good.items()}
+    bad.pop("comparability")
+    check("missing comparability fails",
+          any("comparability" in p for p in validate_manifest(bad)))
+    bad2 = dict(good, comparability="WRONG")
+    check("bad comparability fails",
+          any("comparability" in p for p in validate_manifest(bad2)))
+
+    if failures:
+        print(f"selftest FAILED: {len(failures)} checks")
+        return 1
+    print("selftest passed")
     return 0
 
 

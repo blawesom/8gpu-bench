@@ -40,6 +40,21 @@ from typing import Iterable
 
 TOOL_VERSION = "1.0.0"
 
+
+def corpus_version() -> str:
+    """The corpus_version of the repository VERSION file (spec 00.3.5)."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        os.pardir, "VERSION")
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if line.startswith("corpus_version="):
+                    return line.partition("=")[2].strip()
+    except OSError:
+        pass
+    return "1.0.0"
+
 # ---------------------------------------------------------------------------
 # Profile registry (spec 04.2.1)
 # ---------------------------------------------------------------------------
@@ -381,6 +396,7 @@ def cmd_generate(args) -> int:
     out_dir = os.path.join(args.out_dir, model_dir)
     meta = dict(
         tool_version=TOOL_VERSION,
+        corpus_version=corpus_version(),
         profile=args.profile,
         kind=spec["kind"],
         note=spec.get("note", ""),

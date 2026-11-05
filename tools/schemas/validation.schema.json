@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/blawesom/8gpu-bench/schemas/validation.schema.json",
+  "title": "8gpu-bench validation.json (spec 07.1.3)",
+  "type": "object",
+  "required": [
+    "schema_version", "campaign_id", "generated_at", "versions",
+    "reference", "runs", "test_points", "summary"
+  ],
+  "properties": {
+    "schema_version": { "type": "string" },
+    "campaign_id": { "type": "string", "minLength": 1 },
+    "generated_at": { "type": "string" },
+    "versions": { "type": "object" },
+    "reference": { "type": "object" },
+    "runs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["run_id", "validity", "reasons"],
+        "properties": {
+          "run_id": { "type": "string" },
+          "validity": {
+            "enum": ["VALID", "QUALIFIED", "INVALID", null]
+          },
+          "reasons": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "test_points": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["key", "validity", "repetitions", "reasons"],
+        "properties": {
+          "key": { "type": "string" },
+          "validity": { "enum": ["VALID", "QUALIFIED", "INVALID"] },
+          "repetitions": { "type": "integer", "minimum": 1 },
+          "reasons": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "required": ["valid", "qualified", "invalid", "crosscheck",
+                   "reference"],
+      "properties": {
+        "valid": { "type": "integer", "minimum": 0 },
+        "qualified": { "type": "integer", "minimum": 0 },
+        "invalid": { "type": "integer", "minimum": 0 },
+        "crosscheck": { "type": "integer", "minimum": 0 },
+        "reference": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "schema_errors": { "type": "array", "items": { "type": "string" } }
+  }
+}

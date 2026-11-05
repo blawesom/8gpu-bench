@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/blawesom/8gpu-bench/schemas/manifest.schema.json",
+  "title": "8gpu-bench run manifest (runs/*.yaml, loaded as a dict)",
+  "type": "object",
+  "required": [
+    "run_id_prefix", "campaign_id", "sut", "stack", "stack_version",
+    "model", "precision", "comparability", "server", "client",
+    "test_points"
+  ],
+  "properties": {
+    "run_id_prefix": { "type": "string", "minLength": 1 },
+    "campaign_id": { "type": "string" },
+    "sut": { "type": "string" },
+    "stack": { "type": "string" },
+    "stack_version": { "type": "string" },
+    "model": { "type": "string" },
+    "model_revision": { "type": "string" },
+    "served_model_name": { "type": "string" },
+    "precision": { "type": "string" },
+    "comparability": { "enum": ["STRICT", "ARCH", "HWBEST"] },
+    "tp": { "type": "integer", "minimum": 1 },
+    "lane": { "enum": ["BASE", "TUNED"] },
+    "repetitions": { "type": "integer", "minimum": 1 },
+    "seed": { "type": "integer" },
+    "flags": { "type": "array", "items": { "type": "string" } },
+    "server": {
+      "type": "object",
+      "required": ["image"],
+      "properties": {
+        "image": { "type": "string" },
+        "port": { "type": "integer" },
+        "container_port": { "type": "integer" },
+        "shm_size": { "type": "string" },
+        "mounts": { "type": "array" },
+        "gpus": { "type": "string" },
+        "docker_args": { "type": ["string", "array"] },
+        "args": { "type": "string" }
+      }
+    },
+    "client": {
+      "type": "object",
+      "required": ["target", "guidellm"],
+      "properties": {
+        "target": { "type": "string" },
+        "guidellm": { "type": "string" },
+        "genai_perf": { "type": "string" }
+      }
+    },
+    "reference": {
+      "type": "object",
+      "required": ["profile"],
+      "properties": {
+        "profile": { "type": "string", "pattern": "^PF-[1-9]$" },
+        "scenario": { "type": "string" },
+        "regime": { "type": "string" },
+        "concurrency": { "type": "array", "items": { "type": "integer" } },
+        "requests": { "type": "integer" },
+        "warmup_requests": { "type": "integer" }
+      }
+    },
+    "reference_every": { "type": "integer", "minimum": 1 },
+    "test_points": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["profile", "scenario", "regime"],
+        "properties": {
+          "profile": { "type": "string", "pattern": "^PF-[1-9]$" },
+          "scenario": { "enum": ["P-U", "P-S", "P-C"] },
+          "regime": { "enum": ["W-ON", "W-OFF"] },
+          "mode": { "enum": ["closed", "OPEN"] },
+          "concurrency": { "type": "array", "items": { "type": "integer" } },
+          "rate": { "type": "array", "items": { "type": "number" } },
+          "requests": { "type": "integer" },
+          "warmup_requests": { "type": "integer" }
+        }
+      }
+    }
+  }
+}

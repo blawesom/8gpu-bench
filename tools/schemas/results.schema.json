@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/blawesom/8gpu-bench/schemas/results.schema.json",
+  "title": "8gpu-bench results.json (canonical result file, spec 07.1.2)",
+  "type": "object",
+  "required": [
+    "schema_version", "campaign_id", "generated_at", "generator",
+    "versions", "reference", "records", "aggregates"
+  ],
+  "properties": {
+    "schema_version": { "type": "string" },
+    "campaign_id": { "type": "string", "minLength": 1 },
+    "generated_at": { "type": "string" },
+    "generator": {
+      "type": "object",
+      "required": ["assembler_version", "benchmark_spec"],
+      "properties": {
+        "assembler_version": { "type": "string" },
+        "benchmark_spec": { "type": "string" }
+      }
+    },
+    "versions": {
+      "type": "object",
+      "required": [
+        "benchmark_spec", "runner_version", "assembler_version",
+        "corpus_version", "result_schema_version"
+      ],
+      "properties": {
+        "benchmark_spec": { "type": "string" },
+        "runner_version": { "type": "string" },
+        "assembler_version": { "type": "string" },
+        "corpus_version": { "type": "string" },
+        "result_schema_version": { "type": "string" }
+      }
+    },
+    "reference": {
+      "type": "object",
+      "required": ["count", "throughputs_tps", "drift_pct",
+                   "limit_pct", "pass"],
+      "properties": {
+        "count": { "type": "integer", "minimum": 0 },
+        "throughputs_tps": { "type": "array", "items": { "type": "number" } },
+        "drift_pct": { "type": ["number", "string"] },
+        "limit_pct": { "type": "number" },
+        "pass": { "type": ["boolean", "null"] },
+        "note": { "type": "string" }
+      }
+    },
+    "records": {
+      "type": "array",
+      "items": { "$ref": "run-record.schema.json" }
+    },
+    "aggregates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "sut", "stack", "model", "precision", "comparability",
+          "config_lane", "tp", "payload_profile", "prompt_scenario",
+          "regime", "traffic_mode", "concurrency", "repetitions",
+          "validity", "reasons"
+        ],
+        "properties": {
+          "sut": { "type": "string" },
+          "stack": { "type": "string" },
+          "harness": { "type": "string" },
+          "model": { "type": "string" },
+          "precision": { "type": "string" },
+          "comparability": { "enum": ["STRICT", "ARCH", "HWBEST"] },
+          "config_lane": { "type": "string" },
+          "tp": { "type": ["integer", "string"] },
+          "payload_profile": { "type": "string" },
+          "prompt_scenario": { "type": "string" },
+          "regime": { "type": "string" },
+          "traffic_mode": { "type": "string" },
+          "concurrency": { "type": ["integer", "string"] },
+          "repetitions": { "type": "integer", "minimum": 1 },
+          "out_tps": { "type": ["number", "string"] },
+          "out_tps_p10": { "type": ["number", "string"] },
+          "out_tps_p90": { "type": ["number", "string"] },
+          "cov_pct": { "type": ["number", "string"] },
+          "ci95_low": { "type": ["number", "string"] },
+          "ci95_high": { "type": ["number", "string"] },
+          "validity": { "enum": ["VALID", "QUALIFIED", "INVALID"] },
+          "reasons": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    }
+  }
+}

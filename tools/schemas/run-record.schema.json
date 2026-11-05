@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/blawesom/8gpu-bench/schemas/run-record.schema.json",
+  "title": "8gpu-bench run record (one line of runs.jsonl)",
+  "type": "object",
+  "required": [
+    "run_id", "campaign_id", "sut", "stack", "stack_version", "harness",
+    "model", "precision", "comparability", "config_lane", "tp",
+    "payload_profile", "prompt_scenario", "regime", "traffic_mode",
+    "concurrency", "repetition", "metrics", "flags"
+  ],
+  "properties": {
+    "run_id": { "type": "string", "minLength": 1 },
+    "campaign_id": { "type": "string" },
+    "sut": { "type": "string" },
+    "stack": { "type": "string" },
+    "stack_version": { "type": "string" },
+    "harness": { "type": "string" },
+    "model": { "type": "string" },
+    "model_revision": { "type": "string" },
+    "precision": { "type": "string" },
+    "comparability": { "enum": ["STRICT", "ARCH", "HWBEST"] },
+    "config_lane": { "enum": ["BASE", "TUNED"] },
+    "tp": { "type": "integer", "minimum": 1 },
+    "payload_profile": { "type": "string", "pattern": "^PF-[1-9]$" },
+    "prompt_scenario": { "enum": ["P-U", "P-S", "P-C"] },
+    "regime": { "enum": ["W-ON", "W-OFF"] },
+    "traffic_mode": { "enum": ["closed", "open"] },
+    "concurrency": { "type": "integer", "minimum": 1 },
+    "value_order": { "type": "integer", "minimum": 1 },
+    "repetition": { "type": "integer", "minimum": 1 },
+    "order_seed": { "type": "integer" },
+    "metrics": { "type": "object" },
+    "flags": { "type": "array", "items": { "type": "string" } },
+    "run_dir": { "type": "string" },
+    "raw_dir": { "type": "string" },
+    "exit_code": { "type": "integer" },
+    "run_started_at": { "type": "string" },
+    "run_finished_at": { "type": "string" },
+    "generated_at": { "type": "string" }
+  }
+}

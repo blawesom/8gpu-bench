@@ -21,7 +21,8 @@ served_model_name: DeepSeek-V4.1-Flash
 precision: FP8
 tp: 8
 lane: TUNED
-repetitions: 3
+comparability: STRICT          # spec 04.1.6: the Tier 2 headline model
+repetitions: 7                 # spec 05.4: Tier 2 headline points
 seed: 42
 flags: [PILOT]
 

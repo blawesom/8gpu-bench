@@ -16,7 +16,8 @@ model_revision: ""
 served_model_name: Qwen3.8-27B
 precision: FP8
 tp: 1
-repetitions: 3
+comparability: STRICT          # spec 04.1.6: STRICT / ARCH / HWBEST
+repetitions: 5                 # spec 05.4: 5 core, 7 Tier 2 headline
 seed: 42
 flags: [PILOT]
 

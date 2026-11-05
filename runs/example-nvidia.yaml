@@ -14,9 +14,22 @@ served_model_name: Qwen3.8-27B
 precision: FP8
 tp: 1
 lane: BASE                   # BASE (default) or TUNED (spec 02.4.1)
-repetitions: 3
+comparability: STRICT          # spec 04.1.6: STRICT / ARCH / HWBEST
+repetitions: 5                 # spec 05.4: 5 core, 7 Tier 2 headline
 seed: 42
 flags: [PILOT]                  # extra flags recorded on every row
+
+# Drift detection (spec 05.2.2): the runner runs this point before
+# the first test point, after every 10 test points, and at the end.
+# Records carry the REFERENCE flag and feed the V8 check.
+reference:
+  profile: PF-1
+  scenario: P-U
+  regime: W-ON
+  concurrency: [32]
+  requests: 200
+  warmup_requests: 50
+reference_every: 10
 
 server:
   image: vllm/vllm-openai:v0.32.0
@@ -47,7 +60,8 @@ test_points:
     warmup_requests: 100
 
   # OPEN lane (spec 03.3): Poisson arrivals at a fixed request rate.
-  # Runs on Harness A only. Rates reuse the concurrency value list.
+  # Runs on the primary harness only. Rates reuse the concurrency
+  # value list.
   - profile: PF-1
     scenario: P-U
     regime: W-ON
