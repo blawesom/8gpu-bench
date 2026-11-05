@@ -31,7 +31,7 @@ One row per (test point, harness, repetition).
 | sut | SUT-1 | spec 01 |
 | stack | vllm | spec 02 |
 | stack_version | 0.32.0 (digest ...) | Environment record |
-| harness | guidellm / genai-perf | spec 03 |
+| harness | guidellm | Primary harness (spec 03). Cross-check tools record their own name, flagged CROSSCHECK. |
 | model | gpt-oss-120b | spec 04 |
 | model_revision | hf commit SHA | Environment record |
 | precision | MXFP4 | spec 04 |
@@ -120,7 +120,8 @@ Structure:
 
 ## 6. Reporting rules
 
-1. Never average across harnesses. Report each harness row.
+1. Never put cross-check results in a headline table. Report them
+   separately, flagged CROSSCHECK (spec 03.1).
 2. Never mix prompt scenarios in one table.
 3. Never mix precisions in one table.
 4. A missing cell is "N/A" with the reason in a footnote.

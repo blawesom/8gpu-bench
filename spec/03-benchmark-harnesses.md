@@ -2,29 +2,34 @@
 
 ## 1. Method
 
-Use two harnesses for every measured test point.
-Both harnesses are HTTP clients.
-Both talk to the OpenAI-compatible endpoint of the SUT.
-A test point is complete when both harnesses finish it.
+Use one primary harness for every measured test point.
+The harness is a fixed instrument, like the client machine and the
+network path. Every stack, SUT and configuration lane is measured
+with the same tool, so the measurement never shifts the comparison.
+The harness is an HTTP client. It talks to the OpenAI-compatible
+endpoint of the SUT.
 
 | Role | Harness | Source | Why selected |
 |---|---|---|---|
-| Harness A | GuideLLM | vllm-project/guidellm | SLO-aware. Sweep and Poisson profiles. Reports goodput. Stack-agnostic. |
-| Harness B | GenAI-Perf | triton-inference-server (perf_analyzer) | Mature TTFT/ITL/throughput metrics. Pure client, so vendor-neutral in practice. |
+| Primary | GuideLLM | vllm-project/guidellm | Custom dataset input, tokenizer control, fixed seed, concurrent and Poisson profiles. Stack-agnostic, pure HTTP client. |
 
 Cross-check tier (not a primary result):
 
 | Tool | Where it lives | Use |
 |---|---|---|
+| GenAI-Perf | triton-inference-server (perf_analyzer) | Cross-check the primary result on selected points. Mature TTFT/ITL/throughput metrics. |
 | vLLM `benchmark_serving` | In the vLLM repo | Sanity-check the vLLM row. |
 | SGLang `sgl-bench` | In the SGLang repo | Sanity-check the SGLang row. |
 | `llama-bench` | In the llama.cpp repo | Sanity-check the llama.cpp row. Note: micro-benchmark, excludes tokenization. |
-| TensorRT-LLM `Benchmark` | In the TRT-LLM repo | Sanity-check the TRT-LLM row. |
+| TensorRT-LLM `Benchmark` | In the TRT-LLM repo | Sanity-check the TensorRT-LLM row. |
 
 Rules for cross-checks:
 1. Run a cross-check only after the primary result is recorded.
-2. Never compare a cross-check result against a primary result in the headline table.
-3. If a cross-check deviates by more than 15% from the primary, re-run the primary once.
+2. Never compare a cross-check result against a primary result in
+   the headline table.
+3. If a cross-check deviates by more than 15% from the primary,
+   re-run the primary once.
+4. Cross-check a few points per SUT and stack, not every test point.
 
 ## 2. Client placement
 
@@ -36,7 +41,7 @@ Rules for cross-checks:
 
 ## 3. Harness configuration
 
-Fix these settings for both harnesses:
+Fix these settings for the primary harness:
 
 | Setting | Value |
 |---|---|
@@ -54,41 +59,36 @@ Open-loop lane (OPEN):
 2. Run the OPEN lane on the Tier 2 headline test points (TP3, TP5).
 3. The OPEN lane reuses the concurrency value list as request rates
    (1, 2, 4, ... 256 requests per second).
-4. Harness A drives the OPEN lane (Poisson profile). Harness B stays
-   closed-loop at this version pin.
+4. The primary harness drives the OPEN lane with its Poisson profile.
 5. Mark every OPEN row OPEN. Closed-loop concurrency holds the queue
    inside the client, so latency under load reads low. The OPEN lane
    shows the queueing cost.
 6. Never compare closed-loop rows with OPEN rows in one table.
 
 GuideLLM specific:
-- Profile: sweep for the throughput point, constant concurrency for the latency points.
-- SLO for goodput: see spec 06.4.
-
-GenAI-Perf specific:
-- Mode: profile at each concurrency value.
-- Streaming: on.
+- Profile: concurrent (constant concurrency, closed loop) or
+  poisson (fixed rate, open loop).
 - Report percentiles: p50, p90, p99.
+- SLO for goodput: see spec 06.4.
 
 ## 4. Smoke test
 
 Before a campaign, run the smoke test on one SUT:
 
 1. Start the server with the Tier 1 model, TP=1.
-2. Run 10 requests at concurrency 1 with Harness A.
-3. Run 10 requests at concurrency 1 with Harness B.
-4. Check that TTFT, TPOT, and throughput are non-zero.
-5. Check that the environment record script runs.
-6. Save the output as the smoke-test record.
+2. Run 10 requests at concurrency 1 with the primary harness.
+3. Check that TTFT, TPOT, and throughput are non-zero.
+4. Check that the environment record script runs.
+5. Save the output as the smoke-test record.
 
 If any check fails, stop the campaign and fix the setup.
 
 ## 5. Harness version pinning
 
-| Harness | Version / digest | Date |
+| Tool | Version / digest | Date |
 |---|---|---|
-| GuideLLM | _TBD at Phase 2_ | _TBD_ |
-| GenAI-Perf | _TBD at Phase 2_ | _TBD_ |
+| GuideLLM (primary) | _TBD at Phase 2_ | _TBD_ |
+| GenAI-Perf (cross-check) | _TBD at Phase 2_ | _TBD_ |
 
 Pilot pins are reused for all later phases.
 Update a pin only with a recorded change.

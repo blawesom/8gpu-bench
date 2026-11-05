@@ -237,13 +237,13 @@ request holds the prompt text, the target ISL, and the target OSL.
 
 ### 2.4 Harness mapping
 
-| Profile | GuideLLM input | GenAI-Perf input |
-|---|---|---|
-| PF-1 to PF-9 | The corpus file, through the dataset data kind. | The corpus file, through the custom dataset input. |
+| Profile | Primary harness input |
+|---|---|
+| PF-1 to PF-9 | The corpus file, through the json_file dataset kind. |
 
-Both harnesses have built-in synthetic generation options. Do not use
-them for measured runs. The corpus file is the single source of truth.
-This keeps the two harness views comparable.
+GuideLLM has built-in synthetic generation options. Do not use them
+for measured runs. The corpus file is the single source of truth.
+This keeps every measurement comparable.
 Verify the exact flag names and file schemas at the version pin
 (spec 03.5).
 

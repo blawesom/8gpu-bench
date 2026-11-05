@@ -33,10 +33,9 @@ dataset revisions. FineWeb is a fallback source, fetched only with
 
 Executes one run manifest. Per repetition of every test point, it
 runs the spec 05.3 sequence: server start, health wait, one warmup,
-Harness A sweeps all concurrency values in ascending order, server
-restart, warmup, Harness B sweeps all concurrency values. The server
-restarts once per harness, not once per concurrency value. Writes
-`runs.jsonl` run records and a per-run `meta.json`.
+the primary harness sweeps all concurrency values in ascending
+order, server stop. One server start per test point and repetition.
+Writes `runs.jsonl` run records and a per-run `meta.json`.
 
 ```
 python3 tools/run-benchmark.py --config runs/example-nvidia.yaml \
@@ -44,11 +43,20 @@ python3 tools/run-benchmark.py --config runs/example-nvidia.yaml \
     --telemetry /mnt/sut1/gpu-telemetry
 ```
 
+The harness is a fixed instrument (spec 03.1): every stack and lane
+is measured with GuideLLM. Cross-check tools run after the primary
+results and never enter the headline tables:
+
+```
+python3 tools/run-benchmark.py --config runs/example-nvidia.yaml \
+    --corpora corpora --out results/2026Q4 --cross-check
+```
+
 See `runs/example-nvidia.yaml`, `runs/example-amd.yaml` and
 `runs/example-tuned.yaml` for the manifest schema. The AMD example
 shows the ROCm `docker_args`. The tuned example shows the CFG-TUNED
 lane (spec 02.4.1). Test points accept `mode: OPEN` with a `rate`
-list for the open-loop lane (spec 03.3, Harness A only).
+list for the open-loop lane (spec 03.3, primary harness only).
 
 Validity handling (spec 05.7):
 - Failed server starts and failed warmups produce INVALID records.

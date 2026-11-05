@@ -54,7 +54,7 @@ SLO (reference values, November 2026):
 | M10 | Goodput | tokens/s | Output throughput at the highest concurrency where the SLO holds. |
 | M11 | SLO concurrency | requests | The concurrency value where the SLO last held. |
 
-Report M10 and M11 only where they are computed (Harness A).
+Report M10 and M11 only where they are computed (primary harness).
 They are secondary. Never use them as the only comparison basis.
 
 ## 5. Resource metrics

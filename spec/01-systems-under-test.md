@@ -37,7 +37,7 @@ A SUT enters the core test campaign when all of these pass:
 1. The vendor software (driver + runtime) is at a recorded version.
 2. One core stack serves one Tier 1 model on one GPU.
 3. The same stack serves the Tier 1 model across 8 GPUs (TP=8).
-4. The harness pair runs one smoke test end-to-end (see spec 05.3).
+4. The primary harness runs one smoke test end-to-end (see spec 03.4).
 5. The environment record script outputs a full record (see spec 07).
 6. The system runs 30 minutes idle with no error and no thermal trip.
 

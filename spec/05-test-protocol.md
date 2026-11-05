@@ -40,20 +40,18 @@ for a long time.
 4. Capture the server startup log and settings.
 5. Run the warmup (spec 03.3). One warmup per server start.
 6. Start power sampling (spec 06.7).
-7. Run the measured load with Harness A for every concurrency value
-   of the test point, in ascending order. Save the output of every
-   value.
+7. Run the measured load with the primary harness for every
+   concurrency value of the test point, in ascending order. Save the
+   output of every value.
 8. Stop the server. Confirm the GPUs release.
-9. Start the server again with the same settings.
-10. Repeat steps 5 to 8 with Harness B.
-11. Stop power sampling. Save the power trace.
-12. Write one result row per concurrency value (spec 07).
-13. Repeat the full sequence for two more repetitions.
+9. Stop power sampling. Save the power trace.
+10. Write one result row per concurrency value (spec 07).
+11. Repeat the full sequence for two more repetitions.
 
-The server restarts once per harness, not once per concurrency
-value. This bounds the model-load cost of a campaign. A failed pass
-restarts the server and retries once (spec 04.5 rule 4). The sweep
-then continues with the next value.
+One server start per test point and repetition. The harness is a
+fixed instrument (spec 03.1), so no restart between measurements is
+needed. A failed pass restarts the server and retries once
+(spec 04.5 rule 4). The sweep then continues with the next value.
 Use the median of the three repetitions for the headline result.
 Keep all raw outputs.
 
@@ -116,10 +114,9 @@ Two consecutive INVALID results stop the SUT campaign. Escalate.
 State the logic that makes results comparable:
 
 1. Same client measures every stack, so client cost is constant.
-2. Same harness pair on every stack, so the two results are two
-   independent measurements of one test point. Each harness sees its
-   own server instance: the procedure restarts the server between
-   Harness A and Harness B (spec 05.3).
+2. Same primary harness on every stack (spec 03.1), so the
+   measurement instrument never shifts the comparison. Cross-check
+   tools never enter the headline tables.
 3. Same model revision, precision, and payload profile on every SUT.
 4. Same server baseline config, so vendor-tuned defaults do not shift
    the result. The CFG-TUNED lane (spec 02.4.1) is reported apart.

@@ -202,21 +202,25 @@ def pick_headline_row(rows: list[dict]) -> dict | None:
 def write_headlines(rows: list[dict], out_dir: str) -> str:
     """Headline tables (spec 07.3): one table per model and regime.
 
-    Rows: one per SUT x stack x harness, at the highest measured
-    concurrency. Never mixes prompt scenarios, precisions, config
-    lanes or traffic modes (spec 07.6).
+    Rows: one per SUT x stack, at the highest measured concurrency.
+    Never mixes prompt scenarios, precisions, config lanes or
+    traffic modes (spec 07.6). Cross-check rows are excluded
+    (spec 03.1).
     """
     # One table per (model, precision, scenario, regime, profile,
     # lane, traffic mode): the spec 07.6 rules forbid mixing these,
     # so they must split the tables. Different payload profiles are
-    # different workloads.
+    # different workloads. Cross-check rows never enter the headline
+    # tables (spec 03.1, 07.6).
     tables: dict[tuple, list[dict]] = {}
     for row in rows:
+        if "CROSSCHECK" in row.get("flags", ""):
+            continue
         tables.setdefault((row["model"], row["precision"],
-                            row["prompt_scenario"], row["regime"],
-                            row["payload_profile"], row["config_lane"],
-                            row["traffic_mode"]),
-                           []).append(row)
+                           row["prompt_scenario"], row["regime"],
+                           row["payload_profile"], row["config_lane"],
+                           row["traffic_mode"]),
+                          []).append(row)
 
     lines = ["# Headline tables", "",
              "One table per model, precision, scenario, regime, payload "
@@ -229,8 +233,7 @@ def write_headlines(rows: list[dict], out_dir: str) -> str:
         model, precision, scenario, regime, profile, lane, mode = key
         by_lane: dict[tuple, list[dict]] = {}
         for row in tables[key]:
-            by_lane.setdefault((row["sut"], row["stack"], row["harness"]),
-                               []).append(row)
+            by_lane.setdefault((row["sut"], row["stack"]), []).append(row)
         lanes = [pick_headline_row(v) for v in by_lane.values()]
         lanes = [r for r in lanes if r]
         if not lanes:
@@ -240,7 +243,7 @@ def write_headlines(rows: list[dict], out_dir: str) -> str:
         lines.append(f"## {model} / {precision} / {scenario} / {regime} "
                      f"/ {profile} / {lane} / {mode}")
         lines.append("")
-        header = (["sut", "stack", "harness", "concurrency"]
+        header = (["sut", "stack", "concurrency"]
                   + HEADLINE_METRICS
                   + ["temp_max_c", "power_mean_w", "j_per_1m_out",
                      "flags"])

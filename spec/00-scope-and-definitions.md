@@ -29,7 +29,7 @@ Use these terms with these meanings in all documents.
 | System | One 8-GPU server, with host CPU, memory, and network. |
 | System under test (SUT) | The system that runs the model during a test. |
 | Stack | The software that runs the model and serves requests. Examples: vLLM, SGLang, TensorRT-LLM. |
-| Harness | The client tool that sends load and records times. Harnesses in this project: GuideLLM, GenAI-Perf. |
+| Harness | The client tool that sends load and records times. The primary harness in this project: GuideLLM. Cross-check tools: GenAI-Perf and the native stack benchmarks. |
 | Model | A trained LLM checkpoint. A model has a size, an architecture, and a precision. |
 | Dense model | A model where every token activates all parameters. |
 | MoE model | A model where each token activates only part of the parameters (experts). |
@@ -68,7 +68,7 @@ Use these terms with these meanings in all documents.
 
 ### 3.3 Comparability
 
-- Run every stack with the same client and the same harness pair.
+- Run every stack with the same client and the same primary harness.
 - Fix all settings before the run. See spec 05.
 - Change one variable per comparison.
 - Report the environment record with every result.

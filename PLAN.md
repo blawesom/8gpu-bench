@@ -38,12 +38,12 @@ A buyer can use the result to compare systems.
 | Rank | Repository | Stars | Role in this project |
 |---|---|---|---|
 | 1 | modelscope/evalscope | 3 655 | Not selected |
-| 2 | vllm-project/guidellm | 1 752 | Harness A (primary) |
+| 2 | vllm-project/guidellm | 1 752 | Primary harness |
 | 3 | mlcommons/inference (MLPerf) | 1 657 | Reference only (fixed model list, heavy setup) |
 | 4 | ray-project/llmperf | 1 127 | Excluded (archived) |
 | 5 | huggingface/optimum-benchmark | 341 | Not selected |
 | 6 | huggingface/inference-benchmarker | 176 | Not selected |
-| 7 | NVIDIA genai-perf (perf_analyzer) | 164 | Harness B (primary) |
+| 7 | NVIDIA genai-perf (perf_analyzer) | 164 | Cross-check tier (not primary) |
 
 Key decision: both primary harnesses are HTTP clients.
 They measure any OpenAI-compatible endpoint the same way.
@@ -138,7 +138,7 @@ All documents use the ASD-STE100 standard (Simplified Technical English).
     chat distribution and turn text (ODC-BY, LMSYS fallback is
     recipe-only). Updated November 2026: WildChat turn text now also
     feeds PF-1 to PF-5 (spec 04.2.2 rule 12). FineWeb is a fallback.
-    Confirm the corpus file schema of both harnesses at the version
+    Confirm the corpus file schema of the primary harness at the version
     pin.
 12. Infra pins at Phase 2 (infra/ansible): exact driver versions
     per vendor, jointly with the container digests (the driver must

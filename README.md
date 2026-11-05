@@ -31,17 +31,17 @@ the phase list.
 - Extended set: LMDeploy, llama.cpp, Ollama.
 - Excluded: TGI (archived December 2025), llmperf (archived).
 
-## Benchmark harnesses
+## Benchmark harness
 
-Every stack serves an OpenAI-compatible endpoint. Two client harnesses
-measure every test point:
+Every stack serves an OpenAI-compatible endpoint. One primary
+client harness measures every test point with the same settings:
+GuideLLM (vllm-project). The harness is a fixed instrument, like
+the client machine and the network path.
 
-| Role | Harness |
-|---|---|
-| Harness A | GuideLLM (vllm-project) |
-| Harness B | GenAI-Perf (NVIDIA, pure HTTP client) |
-
-Native stack benchmarks are cross-checks only.
+Cross-check tier, run after the primary results on selected points:
+GenAI-Perf, vLLM `benchmark_serving`, SGLang `sgl-bench`,
+`llama-bench`, TensorRT-LLM `Benchmark`. Cross-check results never
+enter the headline tables.
 
 ## Models
 

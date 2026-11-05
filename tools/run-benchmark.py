@@ -3,24 +3,29 @@
 
 One run manifest declares one stack on one SUT. The runner executes
 every test point in it. Per repetition of every test point it runs
-the full spec 05.3 sequence: server start, health wait, one warmup,
-Harness A (GuideLLM) sweeps every concurrency value in ascending
-order, server restart, warmup, Harness B (GenAI-Perf) sweeps every
-concurrency value. The server restarts once per harness, not once
-per concurrency value.
+the spec 05.3 sequence: server start, health wait, one warmup, the
+primary harness (GuideLLM) sweeps every concurrency value in
+ascending order, server stop. One server start per test point and
+repetition.
+
+The harness is a fixed instrument (spec 03.1): every stack, SUT and
+configuration lane is measured with the same tool. Cross-check tools
+(genai-perf) run only with --cross-check, after the primary results,
+and their records carry the CROSSCHECK flag.
 
 Usage:
   run-benchmark.py --config runs/example-nvidia.yaml --corpora corpora \\
       --out results/2026Q4
   run-benchmark.py --config ... --telemetry /mnt/sut1/gpu-telemetry
+  run-benchmark.py --config ... --cross-check   # after primary results
 
 Output layout per test point and repetition (spec 07.1):
   <out>/<run_id_prefix>/<profile>-<scenario>-<regime>-r<r>/
     meta.json                 per-run environment record (spec 07.4)
     server-<n>.log            server console log, one per container start
-    power-harness-A-C<c>.csv  telemetry rows of one measured pass
-    harness-A/C<c>/           GuideLLM raw output, one directory per pass
-    harness-B/C<c>/           GenAI-Perf raw output, one directory per pass
+    power-guidellm-C<c>.csv   telemetry rows of one measured pass
+    guidellm/C<c>/            primary harness raw output, one dir per pass
+    crosscheck-genai-perf/C<c>/  cross-check output (--cross-check only)
   <out>/runs.jsonl     one record per (test point, harness, value,
                        repetition)
 
@@ -81,7 +86,14 @@ MIN_POWER_COVERAGE_PCT = 90.0
 # V7 keywords scanned in the server log (spec 05.7).
 THERMAL_KEYWORDS = ("throttle", "thermal", "overheat", "power cap")
 
-HARNESS_DIRS = {"guidellm": "harness-A", "genai-perf": "harness-B"}
+HARNESS_DIRS = {"guidellm": "guidellm", "genai-perf": "crosscheck-genai-perf"}
+
+# The primary harness (spec 03.1). The harness is a fixed instrument.
+PRIMARY_HARNESS = "guidellm"
+# Cross-check tools (spec 03.1). Run with --cross-check after the
+# primary results. Their records carry the CROSSCHECK flag and never
+# enter the headline tables.
+CROSS_CHECK_HARNESSES = ["genai-perf"]
 
 
 # ---------------------------------------------------------------------------
@@ -590,6 +602,7 @@ def base_record(cfg: dict, point: dict, harness: str, c: int,
     mode = str(point.get("mode", "closed")).lower()
     tag = f"R{c}" if mode == "open" else f"C{c}"
     raw_dir = os.path.join(run_dir, HARNESS_DIRS[harness], tag)
+    primary = harness == PRIMARY_HARNESS
     record = dict(
         run_id=f"{cfg['run_id_prefix']}-{point['profile']}-{point['scenario']}"
                f"-{point['regime']}-{tag}-r{repetition}-{harness}",
@@ -604,7 +617,8 @@ def base_record(cfg: dict, point: dict, harness: str, c: int,
         traffic_mode=mode, concurrency=c, repetition=repetition,
         run_dir=run_dir, raw_dir=raw_dir, metrics={},
         flags=list(cfg.get("flags", [])) + (["TUNED"] if lane == "TUNED" else [])
-        + (["OPEN"] if mode == "open" else []),
+        + (["OPEN"] if mode == "open" else [])
+        + ([] if primary else ["CROSSCHECK"]),
         run_started_at=now_utc(), generated_at=now_utc(),
     )
     os.makedirs(raw_dir, exist_ok=True)
@@ -792,7 +806,8 @@ def write_run_meta(run_dir: str, cfg: dict, point: dict, corpus: str,
 
 def run_test_point(cfg: dict, point: dict, corpora_root: str, out_root: str,
                    harness_filter: str | None, repetition: int,
-                   telemetry_dir: str | None) -> list[dict]:
+                   telemetry_dir: str | None,
+                   cross_check: bool = False) -> list[dict]:
     profile = point["profile"]
     model_dir = cfg["model"].replace("/", "_")
     corpus = os.path.join(corpora_root, model_dir, f"{profile}.jsonl")
@@ -806,10 +821,14 @@ def run_test_point(cfg: dict, point: dict, corpora_root: str, out_root: str,
     if not isinstance(values, list):
         values = [values]
 
-    # The OPEN lane runs on Harness A only (spec 03.3).
-    harnesses = ([harness_filter] if harness_filter
-                 else (["guidellm"] if mode == "open"
-                       else ["guidellm", "genai-perf"]))
+    # One primary harness (spec 03.1), fixed for every stack and lane.
+    # Cross-check tools run only on request, only closed-loop, and
+    # only after the primary results (spec 03.1).
+    harnesses = [PRIMARY_HARNESS]
+    if cross_check and mode == "closed":
+        harnesses += CROSS_CHECK_HARNESSES
+    if harness_filter:
+        harnesses = [harness_filter]
 
     # One run directory per test point and repetition. Every harness
     # sweep and every concurrency value lives inside it (spec 07.1).
@@ -825,8 +844,8 @@ def run_test_point(cfg: dict, point: dict, corpora_root: str, out_root: str,
     digest = server.image_digest()
 
     records: list[dict] = []
-    # One server lifecycle per harness: A sweeps all values, then the
-    # server restarts and B sweeps all values (spec 05.3).
+    # One server lifecycle per harness sweep: the primary harness
+    # sweeps all values, then the server stops (spec 05.3).
     for harness in harnesses:
         records += sweep_harness(cfg, point, corpus, run_dir, harness,
                                  values, repetition, telemetry_dir,
@@ -855,8 +874,12 @@ def main() -> int:
                              "computes M12 to M16 and V5.")
     parser.add_argument("--harness", choices=sorted(HARNESS_ADAPTERS),
                         default=None,
-                        help="run one harness only (debug). Default: both, "
-                             "per spec 05.3.")
+                        help="run one tool only (debug). Default: the "
+                             "primary harness only (spec 03.1).")
+    parser.add_argument("--cross-check", action="store_true",
+                        help="also run the cross-check tools after the "
+                             "primary harness (spec 03.1). Records carry "
+                             "the CROSSCHECK flag.")
     parser.add_argument("--repetitions", type=int, default=None,
                         help="override the manifest repetition count")
     args = parser.parse_args()
@@ -869,7 +892,8 @@ def main() -> int:
     for point in cfg.get("test_points", []):
         for repetition in range(1, repetitions + 1):
             records = run_test_point(cfg, point, args.corpora, args.out,
-                                     args.harness, repetition, args.telemetry)
+                                     args.harness, repetition,
+                                     args.telemetry, args.cross_check)
             for record in records:
                 append_record(args.out, record)
                 total += 1
