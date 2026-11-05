@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+
+# Tooling outputs
+sources/
+corpora/
+results/
+
+# Ansible
+*.retry
+
+# Editors and OS
+.DS_Store
+*.swp
