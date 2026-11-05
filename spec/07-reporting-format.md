@@ -17,8 +17,8 @@ results/
     report.md              # final narrative report
 ```
 
-Run ID format: `SUTx-stack-vvv-mmmm-TPx-Tx-Px-Wx-Cxx-rN`
-Example: `SUT3-vllm-0.32-gpt-oss-120b-TP8-TS-PU-WON-C128-r2`
+Run ID format: `SUTx-stack-vvv-mmmm-TPx-PFx-Px-Wx-Cxx-rN`
+Example: `SUT3-vllm-0.32-gpt-oss-120b-TP8-PF1-PU-WON-C128-r2`
 
 ## 2. results.csv columns
 
@@ -36,7 +36,7 @@ One row per (test point, harness, repetition).
 | model_revision | hf commit SHA | Environment record |
 | precision | MXFP4 | spec 04 |
 | tp | 8 | Test point |
-| token_profile | TS / TL | spec 04 |
+| payload_profile | PF-1 ... PF-5 | spec 04 |
 | prompt_scenario | PU / PS | spec 04 |
 | regime | WON / WOFF | spec 04 |
 | concurrency | 128 | Test point |

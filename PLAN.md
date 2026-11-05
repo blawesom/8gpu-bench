@@ -91,7 +91,7 @@ All documents use the ASD-STE100 standard (Simplified Technical English).
 |---|---|---|
 | 0 | Research | Repo tables verified. Done (Nov 2026). |
 | 1 | Specification | This document set is complete and approved. |
-| 2 | Pilot | One system per vendor runs all core tests end-to-end. |
+| 2 | Pilot | One system per vendor runs all core tests end-to-end. The corpus generator emits all profile corpora with checksums. |
 | 2a | Hardware pilot | Intel D270 and AMD MI450 support verified. Fail = mark system pilot-phase in results. |
 | 3 | Baseline run | H200 + RTX PRO 6000 + MI300X complete all tests. |
 | 4 | Full campaign | All systems, all core stacks. |
@@ -120,8 +120,10 @@ All documents use the ASD-STE100 standard (Simplified Technical English).
 5. System list per Phase 4 (availability, cost).
 6. Whether LMDeploy and llama.cpp enter the core set after the pilot.
 7. PL-4 lane scope: which SUTs run native FP4 (see spec 04.4).
-8. Payload profile registry: confirm PF-3/PF-4 datasets and seeds (pending
-   spec 04 update for profile registry).
+8. ~~Payload profile registry~~ Done: PF-1 to PF-5 in spec 04.
+   Decide the PF-3 data source (LMSYS-Chat-1M default, ShareGPT
+   fallback) and confirm the corpus file schema of both harnesses
+   at the version pin.
 9. Verify Qwen3.8-27B on AMD (ROCm) during the pilot. The upstream recipe
    does not list a tested AMD path for the 27B.
 10. Verify Kimi K3.1 Pro concurrency ceiling per SUT in the pilot

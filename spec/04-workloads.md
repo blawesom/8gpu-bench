@@ -118,20 +118,82 @@ Rules:
    The exact OSL rule (2.3) still applies: `max_tokens` limits the total
    output, thinking tokens included.
 
-## 2. Token profiles
+## 2. Payload profiles
 
-| ID | Name | ISL | OSL | Use |
-|---|---|---|---|---|
-| T-S | Short | 512 in / 128 out | Latency baseline. |
-| T-L | Long | 8 192 in / 1 024 out | Long-context (prefill-heavy). |
+### 2.1 Registry
+
+A payload profile fixes the request shape: the ISL, the OSL, and the
+source of the prompt text. Two profiles are synthetic with exact
+lengths. Three profiles model real traffic shapes. All profiles are
+versioned artifacts.
+
+| ID | Name | Type | ISL | OSL | Use |
+|---|---|---|---|---|---|
+| PF-1 | Short chat | Fixed synthetic | 512 | 128 | Headline latency and throughput. |
+| PF-2 | Long context | Fixed synthetic | 8 192 | 1 024 | Prefill-heavy, long-context lane. |
+| PF-3 | Chat distribution | Dataset | Empirical | Empirical, capped at 1 024 | Real chat traffic shape. |
+| PF-4 | Agentic / RAG | Distribution synthetic | Mean 4 096, SD 2 048 | 256 | Long input, short output. Agent and RAG shape. |
+| PF-5 | Decode-heavy | Distribution synthetic | 1 024 | 4 096 | Reasoning and long-output shape. |
 
 Rules:
-1. Generate prompts with a fixed seed and a fixed tokenizer.
-2. Pad or truncate prompts to the exact ISL. Record the method.
-3. Force the exact OSL with `max_tokens`. Disable early stop.
-4. Verify that the actual token counts match the profile within ±1 token.
+1. PF-1 and PF-2 are headline profiles. Every SUT reports them.
+2. PF-3, PF-4, and PF-5 are secondary lanes. Run them after the
+   headline lanes pass on the SUT. Report them in separate tables.
+3. Never mix profiles in one table.
+4. A new profile gets a new ID. Do not change an ID that has results.
+5. PF-6 (trace replay) is reserved. Define it when production traces
+   exist. Do not use it in this version.
+
+PF-3 data source:
+- Default: LMSYS-Chat-1M, a fixed recorded sample of 2 000 conversations.
+- Fallback: ShareGPT, processed with a pinned script.
+- Record the dataset revision, the sample seed, and the sampling rule.
+
+### 2.2 Corpus rules
+
+Each profile has one corpus. A corpus is a list of requests. Each
+request holds the prompt text, the target ISL, and the target OSL.
+
+1. Generate each corpus once with the generator script and a fixed seed.
+2. Store the corpus as a JSONL file. Version it in the repository.
+3. Record the corpus checksum in the environment record.
+4. Both harnesses consume the same corpus file for a measured run.
+   The harnesses do not generate their own prompts.
+5. The corpus stores text, not tokens. Token counts depend on the model
+   tokenizer. The generator emits one request list per model, with the
+   ISL and the OSL counted with the tokenizer of that model.
+6. A corpus holds at least 2 000 requests. No prompt repeats within
+   one measured run of 1 000 requests.
+7. PF-4 and PF-5 sample the ISL from the distribution with the fixed
+   seed. The corpus stores the sampled value per request.
+
+### 2.3 Token control
+
+1. For PF-1 and PF-2, pad or truncate each prompt to the exact ISL.
+   Record the method.
+2. For PF-4 and PF-5, pad or truncate each prompt to the sampled ISL.
+3. Force the OSL with `max_tokens` on every profile. Disable early stop.
+4. For PF-3, do not force the ISL. Cap the OSL at 1 024.
+5. Verify the actual token counts against the profile:
+   - PF-1, PF-2, PF-4, PF-5: within 1 token of the target.
+   - PF-3: within 10% of the recorded corpus statistics.
+
+### 2.4 Harness mapping
+
+| Profile | GuideLLM input | GenAI-Perf input |
+|---|---|---|
+| PF-1 to PF-5 | The corpus file, through the dataset data kind. | The corpus file, through the custom dataset input. |
+
+Both harnesses have built-in synthetic generation options. Do not use
+them for measured runs. The corpus file is the single source of truth.
+This keeps the two harness views comparable.
+Verify the exact flag names and file schemas at the version pin
+(spec 03.5).
 
 ## 3. Prompt scenarios
+
+The scenario defines the prefix structure. The profile (section 2)
+defines the request shape. They are independent axes.
 
 | ID | Name | Setup |
 |---|---|---|
@@ -154,12 +216,18 @@ Test point matrix (per model, per stack, per SUT):
 
 | Test point | Model | TP | Profile | Scenario | Regime |
 |---|---|---|---|---|---|
-| TP1 | Tier 1 | 1 | T-S | P-U | W-ON (all concurrency values) |
-| TP2 | Tier 1 | 1 | T-L | P-U | W-ON (1, 4, 16, 64) |
-| TP3 | Tier 2 | 8 | T-S | P-U | W-ON (all concurrency values) |
-| TP4 | Tier 2 | 8 | T-L | P-U | W-ON (1, 4, 16, 64, 128) |
-| TP5 | Tier 2 | 8 | T-S | P-U | W-OFF (saturate) |
-| TP6 | SGLang/vLLM only | 8 | T-S | P-S | W-ON (32, 128) |
+| TP1 | Tier 1 | 1 | PF-1 | P-U | W-ON (all concurrency values) |
+| TP2 | Tier 1 | 1 | PF-2 | P-U | W-ON (1, 4, 16, 64) |
+| TP3 | Tier 2 | 8 | PF-1 | P-U | W-ON (all concurrency values) |
+| TP4 | Tier 2 | 8 | PF-2 | P-U | W-ON (1, 4, 16, 64, 128) |
+| TP5 | Tier 2 | 8 | PF-1 | P-U | W-OFF (saturate) |
+| TP6 | SGLang/vLLM only | 8 | PF-1 | P-S | W-ON (32, 128) |
+| TP7 | Tier 2 | 8 | PF-3 | P-U | W-ON (16, 64) |
+| TP8 | Tier 2 | 8 | PF-4 | P-U | W-ON (16, 64) |
+| TP9 | Tier 2 | 8 | PF-5 | P-U | W-ON (16) |
+
+TP1 to TP6 are headline test points. TP7 to TP9 are secondary lanes.
+Run the secondary lanes after the headline lanes pass on the SUT.
 
 ## 5. Workload validity
 
@@ -167,3 +235,5 @@ Test point matrix (per model, per stack, per SUT):
 2. A run is complete when 1 000 measured requests finish or 1 800 s elapse.
 3. If more than 2% of requests time out or error, the run is invalid.
 4. Re-run an invalid run once. If it fails again, mark INVALID.
+5. A run fails the profile check if the token counts do not meet
+   rule 2.3.5. Mark it INVALID with the flag PROFILE.

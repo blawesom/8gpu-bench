@@ -41,6 +41,7 @@ Fix these settings for both harnesses:
 | Setting | Value |
 |---|---|
 | Requests per run | 1 000 per concurrency point. |
+| Payload source | The profile corpus file (spec 04.2). The harness does not generate prompts. |
 | Request distribution | Constant concurrency (open-loop optional lane, marked OPEN). |
 | Concurrency values | 1, 2, 4, 8, 16, 32, 64, 128, 256. |
 | Warmup before measure | 100 requests or 60 s, whichever is longer. |

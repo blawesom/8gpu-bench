@@ -10,7 +10,7 @@ A test point is one combination of:
 - SUT (spec 01)
 - Stack and version (spec 02)
 - Model and revision (spec 04)
-- Token profile T-S or T-L
+- Payload profile PF-1 to PF-5 (spec 04)
 - Prompt scenario P-U or P-S
 - Traffic regime W-ON or W-OFF
 - Concurrency value (for W-ON)
@@ -54,7 +54,7 @@ Keep all three raw outputs.
 | Sampling | Greedy, temperature 0. |
 | Concurrency list | 1, 2, 4, 8, 16, 32, 64, 128, 256. |
 | Requests per run | 1 000 (plus warmup). |
-| Token profiles | T-S, T-L (spec 04.2). |
+| Payload profiles | PF-1 to PF-5 (spec 04.2). |
 | Prompt seed | Fixed per campaign. |
 | Server config | spec 02.4 baseline. |
 | Client machine | One machine for the whole campaign. |
@@ -70,7 +70,7 @@ Rules:
 
 1. Record the deviation in the environment record.
 2. State the reason (for example: "stack does not support TP=8 on this interconnect").
-3. A deviation must not change the token profile or the concurrency list.
+3. A deviation must not change the payload profile or the concurrency list.
 4. A result with a deviation is marked DEV in the report.
 5. Compare DEV rows only against rows with the same deviation.
 
@@ -107,12 +107,12 @@ State the logic that makes results comparable:
 
 1. Same client measures every stack, so client cost is constant.
 2. Same harness pair on every stack, so the two results are independent views of one run.
-3. Same model revision, precision, and token profile on every SUT.
+3. Same model revision, precision, and payload profile on every SUT.
 4. Same server baseline config, so vendor-tuned defaults do not shift the result.
 5. Unique-prompt scenario with cache control, so prefix reuse cannot hide or create speed.
 6. Median of 3 repetitions with a CoV gate, so noise does not pass as signal.
 7. Full environment record, so any row can be re-checked or re-run.
 
 When comparing two rows, check that these fields match:
-model revision, precision, token profile, scenario, regime, concurrency, TP, and deviation flags.
+model revision, precision, payload profile, scenario, regime, concurrency, TP, and deviation flags.
 If a field does not match, do not compare the two rows.
