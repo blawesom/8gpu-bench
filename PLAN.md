@@ -145,3 +145,10 @@ All documents use the ASD-STE100 standard (Simplified Technical English).
     match what the pinned images expect). Verify the AMD GPU count
     assertion against real rocm-smi JSON output. Verify the D270
     xpu-smi output format.
+13. Verify the KV cache bytes per token of Qwen3.8-27B during the
+    pilot. Estimate: 64 KiB per token (16 full-attention layers,
+    GQA). With BF16 weights (54 GB), TP2 (PF-2, C=64, about 39 GB
+    of KV) exceeds the SUT-3 memory budget (86.4 GB) by about 7 GB.
+    The queue absorbs it, so the run does not fail: the concurrency
+    silently drops. If it does not fit, run Tier 1 at FP8 on SUT-3,
+    or cap the TP2 concurrency at 16 on SUT-3 with a DEV flag.

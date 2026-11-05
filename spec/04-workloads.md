@@ -35,6 +35,15 @@ Record which features the server activated for each run (see 1.5).
 Notes:
 - BF16 weights are about 54 GB. This fits one GPU of every SUT,
   including SUT-3 (RTX PRO 6000, 96 GB) and SUT-7 (D270, 160 GB).
+- Memory check, TP2 (PF-2, 8 192 tokens per request, C=64): the KV
+  cache needs about 39 GB on one GPU. This assumes 64 KiB per token
+  (16 full-attention layers, GQA. Estimate, verify at the pilot).
+  With 54 GB of BF16 weights, the total is about 93 GB. This is over
+  the SUT-3 budget of 86.4 GB (0.90 x 96 GB, spec 05.4). The queue
+  then holds the requests. The concurrency drops without an error,
+  so the point measures capacity, not speed. If TP2 does not fit on
+  SUT-3, use FP8 for Tier 1 on SUT-3 (about 27 GB of weights), or
+  cap the TP2 concurrency at 16 on SUT-3 and flag the rows DEV.
 - vLLM serves it from version 0.17.0. NVIDIA NIM has FP8 and NVFP4
   profiles for Hopper and Blackwell.
 - The AMD path for the 27B is not verified upstream. Verify it in the
