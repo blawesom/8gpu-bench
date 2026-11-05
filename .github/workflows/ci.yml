@@ -1,0 +1,48 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  tools:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dev dependencies
+        run: python -m pip install --quiet pyyaml jsonschema
+
+      - name: Syntax check
+        run: python -m py_compile tools/gen-corpus.py tools/run-benchmark.py tools/build-results.py
+
+      - name: Corpus generator selftest
+        run: python tools/gen-corpus.py selftest
+
+      - name: Runner selftest (order, schedule, manifest checks)
+        run: python tools/run-benchmark.py selftest
+
+      - name: Assembler selftest (stats, validity, drift, schemas)
+        run: python tools/build-results.py selftest
+
+      - name: Validate the example run manifests
+        run: |
+          python - <<'EOF'
+          import importlib.util
+          spec = importlib.util.spec_from_file_location(
+              "rb", "tools/run-benchmark.py")
+          rb = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(rb)
+          import glob
+          for path in sorted(glob.glob("runs/*.yaml")):
+              cfg = rb.load_manifest(path)
+              problems = rb.validate_manifest(cfg)
+              if problems:
+                  raise SystemExit(f"{path}: {problems}")
+              print(f"ok: {path}")
+          EOF
