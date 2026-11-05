@@ -24,25 +24,50 @@ with sources, revisions, attribution, expected cache hit, and the
 corpus checksum. The first line of each corpus file is a `_meta`
 record. Harness adapters skip it.
 
-Sources (spec 04.2.2): PG-19 (session history), WildChat-1M (chat,
-turn text), FineWeb (filler). Fetch records the dataset revisions.
+Sources (spec 04.2.2): PG-19 (session history), WildChat-1M (chat
+and prompt text for every non-session profile). Fetch records the
+dataset revisions. FineWeb is a fallback source, fetched only with
+`--fineweb-docs N`.
 
 ## run-benchmark.py — test-point runner (spec 05.3)
 
-Executes one run manifest: server lifecycle, health wait, warmup,
-harness run, three repetitions. Writes `runs.jsonl` run records.
+Executes one run manifest. Per repetition of every test point, it
+runs the spec 05.3 sequence: server start, health wait, one warmup,
+Harness A sweeps all concurrency values in ascending order, server
+restart, warmup, Harness B sweeps all concurrency values. The server
+restarts once per harness, not once per concurrency value. Writes
+`runs.jsonl` run records and a per-run `meta.json`.
 
 ```
-python3 tools/run-benchmark.py --config runs/sut1-vllm.yaml \
-    --corpora corpora --out results/2026Q4 --harness guidellm
+python3 tools/run-benchmark.py --config runs/example-nvidia.yaml \
+    --corpora corpora --out results/2026Q4 \
+    --telemetry /mnt/sut1/gpu-telemetry
 ```
 
-The manifest declares the SUT, the stack container, the model, and
-the test points. See the docstring for the schema.
+See `runs/example-nvidia.yaml`, `runs/example-amd.yaml` and
+`runs/example-tuned.yaml` for the manifest schema. The AMD example
+shows the ROCm `docker_args`. The tuned example shows the CFG-TUNED
+lane (spec 02.4.1). Test points accept `mode: OPEN` with a `rate`
+list for the open-loop lane (spec 03.3, Harness A only).
 
-Adapter status: the GuideLLM adapter follows the documented CLI.
-The GenAI-Perf adapter needs flag verification at the version pin
-(spec 03.5). Raw harness output is always kept under `raw/`.
+Validity handling (spec 05.7):
+- Failed server starts and failed warmups produce INVALID records.
+  Nothing is silently dropped.
+- A failed pass is retried once (spec 04.5 rule 4).
+- Two consecutive INVALID results stop the campaign.
+- V1 (error rate), V5 (power coverage), V6 (record completeness) and
+  V7 (thermal events) are checked where data is available.
+  V3 (CoV) is computed by build-results.py.
+
+`--telemetry` points at the SUT telemetry directory (the output of
+the `gpu-telemetry` service). The runner slices it by run window,
+writes `power-harness-A.csv` / `power-harness-B.csv` per run, and
+fills the power, temperature, utilization and memory metrics.
+
+Adapter status: both adapters match the upstream CLI documentation
+(Nov 2026). PILOT-VERIFY the custom-dataset schema of each harness
+at the version pin (spec 03.5, PLAN item 8). Raw harness output is
+always kept under `harness-A/` and `harness-B/`.
 
 ## build-results.py — results assembler (spec 07)
 
@@ -51,3 +76,13 @@ Merges `runs.jsonl` records into `results.csv` and `headlines.md`.
 ```
 python3 tools/build-results.py --runs results/2026Q4 --out results/2026Q4
 ```
+
+- `results.csv`: one row per (test point, harness, repetition),
+  columns per spec 07.2, including the config lane, traffic mode and
+  success rate.
+- `headlines.md`: one table per model, precision, scenario, regime,
+  profile, config lane and traffic mode. Rows sit at the highest
+  measured concurrency, with the delivery metrics (throughput,
+  success rate, TTFT, TPOT, E2E). Values are the median of the
+  repetitions. A coefficient of variation of 5% or more across
+  repetitions marks the row INVALID (V3).

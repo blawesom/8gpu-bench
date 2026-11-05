@@ -7,9 +7,13 @@ Subcommands:
   selftest        Validate the generation logic with a mock tokenizer.
 
 Source cache files (JSONL, one record per line):
-  pg19.jsonl      {"text": str}                  session history text
-  wildchat.jsonl  {"turns": [str, ...]}          chat turns, user first
-  fineweb.jsonl   {"text": str}                  filler text
+  pg19.jsonl      {"text": str}   session history text (session profiles)
+  wildchat.jsonl  {"turns": [str, ...]}  chat turns, user first
+  fineweb.jsonl   {"text": str}   filler text (fallback only, not fetched
+                                 by default; spec 04.2.2 rule 12)
+
+Prompt text for PF-1 to PF-5 comes from WildChat turns (spec 04.2.2
+rule 12): real chat text keeps content-dependent behavior realistic.
 
 Corpus output (per profile, per model):
   <out>/<model>/<profile>.jsonl       requests, first line is a _meta record
@@ -42,16 +46,16 @@ TOOL_VERSION = "1.0.0"
 
 PROFILES: dict[str, dict] = {
     "PF-1": dict(kind="fixed", isl=512, osl=128, requests=2000,
-                 source="fineweb", note="Short chat. Headline."),
+                 source="wildchat", note="Short chat. Headline."),
     "PF-2": dict(kind="fixed", isl=8192, osl=1024, requests=2000,
-                 source="fineweb", note="Long context. Headline."),
+                 source="wildchat", note="Long context. Headline."),
     "PF-3": dict(kind="chat", osl_cap=1024, requests=2000,
                  source="wildchat", note="Chat distribution. WildChat-1M."),
     "PF-4": dict(kind="dist", isl_mean=4096, isl_sd=2048, isl_min=512,
-                 osl=256, requests=2000, source="fineweb",
+                 osl=256, requests=2000, source="wildchat",
                  note="Agentic / RAG shape."),
     "PF-5": dict(kind="fixed", isl=1024, osl=4096, requests=2000,
-                 source="fineweb", note="Decode-heavy shape."),
+                 source="wildchat", note="Decode-heavy shape."),
     "PF-7": dict(kind="session", isl=30000, osl=500, sessions=60, turns=10,
                  source="pg19", note="Production p50."),
     "PF-8": dict(kind="session", isl=100000, osl=5000, sessions=25, turns=10,
@@ -340,39 +344,39 @@ def cmd_generate(args) -> int:
     tokenizer = load_tokenizer(args.model, args.mock)
     rng = random.Random(args.seed)
 
-    pg19 = read_jsonl(os.path.join(args.sources_dir, "pg19.jsonl"))
     wildchat = read_jsonl(os.path.join(args.sources_dir, "wildchat.jsonl"))
-    fineweb = read_jsonl(os.path.join(args.sources_dir, "fineweb.jsonl"))
-
-    source_meta = []
-    for name, fname in (("pg19", "pg19.jsonl"), ("wildchat", "wildchat.jsonl"),
-                        ("fineweb", "fineweb.jsonl")):
-        path = os.path.join(args.sources_dir, fname)
-        source_meta.append(
-            dict(name=name, dataset=SOURCE_DATASETS[name], file=fname,
-                 sha256=sha256_file(path), records=len(read_jsonl(path)))
-        )
+    turn_texts = [t for rec in wildchat for t in (rec.get("turns") or [])]
+    if not turn_texts:
+        raise SystemExit("wildchat.jsonl has no turns")
 
     if spec["kind"] == "chat":
         rows, stats = build_chat(spec, wildchat, tokenizer)
     elif spec["kind"] == "session":
+        pg19 = read_jsonl(os.path.join(args.sources_dir, "pg19.jsonl"))
         book_stream = TokenStream((r["text"] for r in pg19), tokenizer)
-        turn_texts = []
-        for rec in wildchat:
-            turn_texts.extend(rec.get("turns") or [])
-        if not turn_texts:
-            raise SystemExit("wildchat.jsonl has no turns")
         chat_stream = TokenStream(turn_texts, tokenizer)
-        rows, stats = build_sessions(spec, book_stream, chat_stream, tokenizer, rng)
+        rows, stats = build_sessions(spec, book_stream, chat_stream,
+                                      tokenizer, rng)
     else:
-        stream = TokenStream((r["text"] for r in fineweb), tokenizer)
+        # PF-1 to PF-5: prompt text from WildChat turns
+        # (spec 04.2.2 rule 12). Real chat text keeps content-dependent
+        # behavior (speculative-decoding acceptance, EOS) realistic.
+        stream = TokenStream(turn_texts, tokenizer)
         if spec["kind"] == "dist":
             rows, stats = build_distribution(spec, stream, tokenizer, rng)
         else:
             rows, stats = build_fixed(spec, stream, tokenizer, rng)
 
-    used_sources = sorted({spec["source"], "wildchat"} if spec["kind"] == "session"
-                          else {spec["source"]})
+    used_sources = sorted(
+        {"wildchat"} | ({"pg19"} if spec["kind"] == "session" else set()))
+    source_meta = []
+    for name in used_sources:
+        fname = f"{name}.jsonl"
+        path = os.path.join(args.sources_dir, fname)
+        source_meta.append(
+            dict(name=name, dataset=SOURCE_DATASETS[name], file=fname,
+                 sha256=sha256_file(path), records=len(read_jsonl(path)))
+        )
     model_dir = args.model.replace("/", "_")
     out_dir = os.path.join(args.out_dir, model_dir)
     meta = dict(
@@ -457,25 +461,29 @@ def cmd_fetch(args) -> int:
                 break
     print(f"wildchat: {count} conversations, revision {rev}")
 
-    # FineWeb (sample-10BT config): filler text.
-    rev = resolved_revision(SOURCE_DATASETS["fineweb"])
-    out = os.path.join(args.out_dir, "fineweb.jsonl")
-    with open(out, "w", encoding="utf-8") as fh:
-        ds = load_dataset(SOURCE_DATASETS["fineweb"], "sample-10BT",
-                          split="train", streaming=True, revision=args.revision)
-        count = 0
-        tokens = 0
-        for rec in ds:
-            text = rec.get("text") or ""
-            words = len(text.split())
-            if words < 100:  # keep docs that can feed PF-1 and larger
-                continue
-            fh.write(json.dumps({"text": text}, ensure_ascii=False) + "\n")
-            count += 1
-            tokens += words
-            if count >= args.fineweb_docs or tokens >= args.fineweb_max_tokens:
-                break
-    print(f"fineweb: {count} docs, about {tokens} whitespace tokens, revision {rev}")
+    # FineWeb (sample-10BT config): filler text. Fallback source only
+    # (spec 04.2.2 rule 12). Not fetched by default.
+    if args.fineweb_docs > 0:
+        rev = resolved_revision(SOURCE_DATASETS["fineweb"])
+        out = os.path.join(args.out_dir, "fineweb.jsonl")
+        with open(out, "w", encoding="utf-8") as fh:
+            ds = load_dataset(SOURCE_DATASETS["fineweb"], "sample-10BT",
+                              split="train", streaming=True, revision=args.revision)
+            count = 0
+            tokens = 0
+            for rec in ds:
+                text = rec.get("text") or ""
+                words = len(text.split())
+                if words < 100:  # keep docs that can feed PF-1 and larger
+                    continue
+                fh.write(json.dumps({"text": text}, ensure_ascii=False) + "\n")
+                count += 1
+                tokens += words
+                if count >= args.fineweb_docs or tokens >= args.fineweb_max_tokens:
+                    break
+        print(f"fineweb: {count} docs, about {tokens} whitespace tokens, revision {rev}")
+    else:
+        print("fineweb: skipped (fallback source, spec 04.2.2 rule 12)")
     return 0
 
 
@@ -498,12 +506,12 @@ def cmd_selftest(args) -> int:
     rng = random.Random(42)
 
     # Fabricated sources. Words are unique so prompts never repeat.
-    fineweb = [{"text": " ".join(f"fw{i}_{j}" for j in range(400))}
-               for i in range(200)]
+    # WildChat turns feed every non-session profile (spec 04.2.2 rule 12).
     pg19 = [{"text": " ".join(f"bk{i}_{j}" for j in range(60000))}
             for i in range(8)]
     wildchat = [{"turns": [f"turn{i}_{j}" for j in range(60)]}
                 for i in range(400)]
+    turn_texts = [t for rec in wildchat for t in rec["turns"]]
 
     def scaled(profile: str, spec: dict) -> dict:
         spec = dict(spec)
@@ -527,14 +535,13 @@ def cmd_selftest(args) -> int:
             rows, stats = build_chat(spec, wildchat, tok)
         elif spec["kind"] == "session":
             book = TokenStream((r["text"] for r in pg19), tok)
-            turn_texts = [t for rec in wildchat for t in rec["turns"]]
             chat = TokenStream(turn_texts, tok)
             rows, stats = build_sessions(spec, book, chat, tok, rng)
         elif spec["kind"] == "dist":
-            stream = TokenStream((r["text"] for r in fineweb), tok)
+            stream = TokenStream(turn_texts, tok)
             rows, stats = build_distribution(spec, stream, tok, rng)
         else:
-            stream = TokenStream((r["text"] for r in fineweb), tok)
+            stream = TokenStream(turn_texts, tok)
             rows, stats = build_fixed(spec, stream, tok, rng)
 
         # Check 1: exact ISL on controlled profiles.
@@ -619,8 +626,13 @@ def main() -> int:
     p.add_argument("--revision", default="main",
                    help="dataset git revision (default: main)")
     p.add_argument("--pg19-books", type=int, default=300)
-    p.add_argument("--wildchat-convs", type=int, default=25000)
-    p.add_argument("--fineweb-docs", type=int, default=100000)
+    p.add_argument("--wildchat-convs", type=int, default=75000,
+                   help="conversations to cache. All non-session "
+                        "profiles draw their prompt text from this "
+                        "cache (spec 04.2.2 rule 12), so it must hold "
+                        "tens of millions of tokens.")
+    p.add_argument("--fineweb-docs", type=int, default=0,
+                   help="fetch FineWeb filler docs (fallback source; 0 skips)")
     p.add_argument("--fineweb-max-tokens", type=int, default=50_000_000,
                    help="whitespace-token budget for the filler cache")
     p.set_defaults(func=cmd_fetch)
