@@ -1,0 +1,48 @@
+# Example run manifest: AMD SUT, vLLM (ROCm build), Tier 1 smoke lane.
+# Differences from the NVIDIA example:
+#   - No "gpus" key. Docker's --gpus is an NVIDIA runtime option.
+#   - docker_args passes the ROCm device nodes and groups.
+#     Required: --device /dev/kfd --device /dev/dri --group-add video
+#     --ipc=host (spec 02.2). Verify the exact set against the pinned
+#     image at the pilot.
+
+run_id_prefix: sut4-vllm
+campaign_id: 2026Q4
+sut: SUT-4
+stack: vllm
+stack_version: "0.32.0-rocm"
+model: Qwen/Qwen3.8-27B
+model_revision: ""
+served_model_name: Qwen3.8-27B
+precision: FP8
+tp: 1
+repetitions: 3
+seed: 42
+flags: [PILOT]
+
+server:
+  image: vllm/vllm-openai-rocm:v0.32.0
+  port: 8000
+  container_port: 8000
+  shm_size: 64g
+  mounts:
+    - /opt/models:/models:ro
+  docker_args: >-
+    --device /dev/kfd --device /dev/dri --group-add video --ipc=host
+  args: >-
+    --model /models/Qwen3.8-27B
+    --served-model-name Qwen3.8-27B
+    --dtype float8
+
+client:
+  target: http://sut4:8000
+  guidellm: /opt/8gpu-bench/harness/venv/bin/guidellm
+  genai_perf: /opt/8gpu-bench/harness/venv/bin/genai-perf
+
+test_points:
+  - profile: PF-1
+    scenario: P-U
+    regime: W-ON
+    concurrency: [1, 2, 4, 8, 16, 32, 64, 128, 256]
+    requests: 1000
+    warmup_requests: 100

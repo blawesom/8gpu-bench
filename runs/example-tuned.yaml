@@ -1,0 +1,58 @@
+# Example run manifest: CFG-TUNED lane (spec 02.4.1).
+# The tuned lane runs the vendor best-known configuration: DP
+# attention, expert parallelism, custom kernels. It runs the same
+# payload profiles, request counts and concurrency list as CFG-BASE.
+# Only the server configuration changes.
+#
+# Rules:
+#   - Every row is flagged TUNED and never compared with CFG-BASE rows.
+#   - The full server settings are recorded in meta.json.
+#   - Run the matching CFG-BASE manifest first: a TUNED result
+#     without the BASE result is incomplete.
+
+run_id_prefix: sut1-vllm-tuned
+campaign_id: 2026Q4
+sut: SUT-1
+stack: vllm
+stack_version: "0.32.0"
+model: deepseek-ai/DeepSeek-V4.1-Flash
+model_revision: ""
+served_model_name: DeepSeek-V4.1-Flash
+precision: FP8
+tp: 8
+lane: TUNED
+repetitions: 3
+seed: 42
+flags: [PILOT]
+
+server:
+  image: vllm/vllm-openai:v0.32.0
+  port: 8000
+  container_port: 8000
+  shm_size: 64g
+  mounts:
+    - /opt/models:/models:ro
+  gpus: all
+  # Vendor best-known config. Record every flag here: this block is
+  # the TUNED lane definition. Example shape for a MoE model:
+  args: >-
+    --model /models/DeepSeek-V4.1-Flash
+    --served-model-name DeepSeek-V4.1-Flash
+    --dtype float8
+    --enable-dp-attention
+    --dp-size 8
+    --enable-expert-parallel
+
+client:
+  target: http://sut1:8000
+  guidellm: /opt/8gpu-bench/harness/venv/bin/guidellm
+  genai_perf: /opt/8gpu-bench/harness/venv/bin/genai-perf
+
+test_points:
+  # Same test points as the CFG-BASE manifest of this SUT and stack.
+  - profile: PF-1
+    scenario: P-U
+    regime: W-ON
+    concurrency: [1, 2, 4, 8, 16, 32, 64, 128, 256]
+    requests: 1000
+    warmup_requests: 100

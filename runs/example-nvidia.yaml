@@ -1,0 +1,57 @@
+# Example run manifest: NVIDIA SUT, vLLM, Tier 1 smoke lane (TP1).
+# Copy to runs/<sut>-<stack>.yaml and adjust. The runner records the
+# resolved image digest at run time (spec 07.4). Pin image tags by
+# digest for the campaign (spec 02.2).
+
+run_id_prefix: sut1-vllm
+campaign_id: 2026Q4
+sut: SUT-1
+stack: vllm
+stack_version: "0.32.0"        # goes into every record verbatim
+model: Qwen/Qwen3.8-27B
+model_revision: ""             # HF commit SHA. Fill before the campaign.
+served_model_name: Qwen3.8-27B
+precision: FP8
+tp: 1
+lane: BASE                   # BASE (default) or TUNED (spec 02.4.1)
+repetitions: 3
+seed: 42
+flags: [PILOT]                  # extra flags recorded on every row
+
+server:
+  image: vllm/vllm-openai:v0.32.0
+  port: 8000
+  container_port: 8000
+  shm_size: 64g
+  mounts:
+    - /opt/models:/models:ro
+  # NVIDIA: --gpus. Omit for AMD and Intel.
+  gpus: all
+  args: >-
+    --model /models/Qwen3.8-27B
+    --served-model-name Qwen3.8-27B
+    --dtype float8
+
+client:
+  target: http://sut1:8000      # dedicated client machine (spec 03.2)
+  guidellm: /opt/8gpu-bench/harness/venv/bin/guidellm
+  genai_perf: /opt/8gpu-bench/harness/venv/bin/genai-perf
+
+test_points:
+  # TP1: Tier 1, PF-1, P-U, W-ON, all concurrency values (spec 04.4).
+  - profile: PF-1
+    scenario: P-U
+    regime: W-ON
+    concurrency: [1, 2, 4, 8, 16, 32, 64, 128, 256]
+    requests: 1000
+    warmup_requests: 100
+
+  # OPEN lane (spec 03.3): Poisson arrivals at a fixed request rate.
+  # Runs on Harness A only. Rates reuse the concurrency value list.
+  - profile: PF-1
+    scenario: P-U
+    regime: W-ON
+    mode: OPEN
+    rate: [8, 32, 128]
+    requests: 1000
+    warmup_requests: 100

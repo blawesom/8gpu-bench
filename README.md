@@ -10,7 +10,7 @@ the phase list.
 ## What it measures
 
 - Large language model (LLM) inference on one 8-GPU node.
-- Latency, throughput, goodput, memory, and power.
+- Latency, throughput, success rate, memory, and power.
 - Inference performance only. Model quality is out of scope.
 
 ## Systems under test
@@ -55,6 +55,13 @@ Native stack benchmarks are cross-checks only.
 FP8 (or BF16 for Tier 1) is the common comparable lane.
 Native FP4 is a separate hardware-best lane.
 
+Every stack runs two configuration lanes (spec 02.4.1): CFG-BASE, the
+fixed baseline, and CFG-TUNED, the vendor best-known configuration.
+The lanes are reported separately and never compared with each other.
+Load runs closed-loop (constant concurrency) and, on the Tier 2
+headline points, an open-loop lane (OPEN) with Poisson arrivals
+(spec 03.3).
+
 ## Workload profiles
 
 | ID | Type | ISL / OSL | Role |
@@ -85,15 +92,17 @@ tokens, so every selected model runs every lane natively.
 | [spec/03-benchmark-harnesses.md](spec/03-benchmark-harnesses.md) | Dual-harness method, client setup. |
 | [spec/04-workloads.md](spec/04-workloads.md) | Models, payload profiles, scenarios, test matrix. |
 | [spec/05-test-protocol.md](spec/05-test-protocol.md) | Run procedure, comparability, validity checks. |
-| [spec/06-metrics.md](spec/06-metrics.md) | Metrics M1 to M23. |
+| [spec/06-metrics.md](spec/06-metrics.md) | Metrics M1 to M24. |
 | [spec/07-reporting-format.md](spec/07-reporting-format.md) | Result store, tables, environment records. |
 
 ## Status and next steps
 
 - Phase 0 (research): done.
 - Phase 1 (specification): this document set.
-- Phase 2 (pilot): next. Deliverables: corpus generator, environment
-  record script, one system per vendor end to end.
+- Phase 2 (pilot): in progress. The corpus generator, the test-point
+  runner and the results assembler are in `tools/`. Example run
+  manifests are in `runs/`. Next: pin versions, verify the harness
+  dataset schemas, run one system per vendor end to end.
 
 Open decisions are listed in [PLAN.md](PLAN.md), section 7.
 
