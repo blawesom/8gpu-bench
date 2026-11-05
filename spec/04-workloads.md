@@ -49,13 +49,15 @@ Notes:
 |---|---|
 | Model (selected) | deepseek-ai DeepSeek-V4.1-Flash (552B total, 8B/16B active, 890 bytes KV per token, compressed attention plus SWA, MTP/DSpark, 1M context) |
 | Fallback | zai-org GLM-5.3-Flash (321B MoE, DSA, NVFP4 / FP8 / BF16) |
-| Cross-vendor denominator | openai/gpt-oss-120b (MXFP4, MLPerf Inference v6.0 workload) |
+| Anchor (Phase 3) | openai/gpt-oss-120b (MXFP4, MLPerf Inference v6.0 workload) |
 
 Notes:
 - DeepSeek-V4.1-Flash has SGLang day-0 support on Blackwell, H200, and MI350X. vLLM supports the DeepSeek-V4 family.
 - GLM-5.3-Flash runs at TP2 to TP8 in NVFP4, FP8, and BF16.
-- Run the cross-vendor denominator model on every SUT. It anchors our
-  numbers against published MLPerf Inference v6.0 results.
+- The anchor model is the Phase 3 MLPerf anchor only. It does not run
+  as a full campaign lane. It anchors our numbers against published
+  MLPerf Inference v6.0 results. Its 131k context window excludes it
+  from the production lanes (rule 2.1.7).
 - DeepSeek-V4.1-Flash at FP8 needs about 600 GB for the weights. It fits SUT-1,
   SUT-2, SUT-4, SUT-5, SUT-6 at FP8. For SUT-3, use the FP4 lane (1.4).
 
@@ -97,6 +99,10 @@ Rules:
 4. If a SUT emulates a format (example: NVFP4 emulation on H200),
    flag the row EMU. An emulated row is not comparable with a native row.
 5. Run PL-4 for Tier 2 test points TP3, TP5, and TP6 only. This bounds the time.
+6. PL-4 scope (ratified November 2026): run native FP4 on SUT-2 and
+   SUT-3 (NVFP4) and on SUT-4, SUT-5, and SUT-6 (MXFP4). SUT-1 runs
+   NVFP4 in emulation only. Flag those rows EMU. SUT-7 enters PL-4
+   only after the pilot.
 
 ### 1.5 Model rules
 

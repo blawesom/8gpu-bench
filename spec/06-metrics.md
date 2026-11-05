@@ -36,7 +36,7 @@ M9 shows the cost of splitting the model across GPUs.
 
 ## 4. SLO and goodput
 
-Default SLO (adjustable at Phase 2, record the change):
+SLO (ratified for the campaign, November 2026):
 
 | Limit | Value |
 |---|---|

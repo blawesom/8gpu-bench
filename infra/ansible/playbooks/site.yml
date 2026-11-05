@@ -7,6 +7,7 @@
   become: true
   roles:
     - base
+    - client-harness
 
 - name: Bring up the SUTs
   hosts: nvidia:amd:intel

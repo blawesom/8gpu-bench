@@ -1,0 +1,56 @@
+---
+# Harness installation on the load client (spec 03).
+# GuideLLM and GenAI-Perf run on the client, not on the SUT.
+
+- name: Install Python venv support
+  ansible.builtin.apt:
+    name:
+      - python3-venv
+      - python3-pip
+    state: present
+    update_cache: true
+
+- name: Create the harness venv
+  ansible.builtin.file:
+    path: /opt/8gpu-bench/harness
+    state: directory
+    mode: "0755"
+
+- name: Install GuideLLM into the venv
+  ansible.builtin.command: >-
+    /usr/bin/python3 -m venv /opt/8gpu-bench/harness/venv
+    && /opt/8gpu-bench/harness/venv/bin/pip install --upgrade pip
+    && /opt/8gpu-bench/harness/venv/bin/pip install
+    guidellm=={{ guidellm_version }}
+  args:
+    creates: /opt/8gpu-bench/harness/venv/bin/guidellm
+
+- name: Install GenAI-Perf into the venv
+  ansible.builtin.command: >-
+    /opt/8gpu-bench/harness/venv/bin/pip install
+    genai-perf=={{ genai_perf_version }}
+  args:
+    creates: /opt/8gpu-bench/harness/venv/bin/genai-perf
+
+- name: Verify GuideLLM runs
+  ansible.builtin.command: /opt/8gpu-bench/harness/venv/bin/guidellm --help
+  changed_when: false
+  register: guidellm_check
+  failed_when: guidellm_check.rc != 0
+
+- name: Verify GenAI-Perf runs
+  ansible.builtin.command: /opt/8gpu-bench/harness/venv/bin/genai-perf --help
+  changed_when: false
+  register: genaiperf_check
+  failed_when: genaiperf_check.rc != 0
+
+- name: Report the harness versions
+  ansible.builtin.command: >-
+    /opt/8gpu-bench/harness/venv/bin/pip show
+    guidellm genai-perf
+  changed_when: false
+  register: harness_versions
+
+- name: Show the versions for the environment record
+  ansible.builtin.debug:
+    msg: "{{ harness_versions.stdout }}"

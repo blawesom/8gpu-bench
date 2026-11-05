@@ -78,6 +78,7 @@ tokens, so every selected model runs every lane natively.
 |---|---|
 | [PLAN.md](PLAN.md) | Phases, research summary, risks, open items. |
 | [infra/ansible/README.md](infra/ansible/README.md) | Node environment bring-up (Ansible). |
+| [tools/README.md](tools/README.md) | Corpus generator, test-point runner, results assembler. |
 | [spec/00-scope-and-definitions.md](spec/00-scope-and-definitions.md) | Scope, terms, rules. |
 | [spec/01-systems-under-test.md](spec/01-systems-under-test.md) | Hardware matrix, entry criteria. |
 | [spec/02-inference-stacks.md](spec/02-inference-stacks.md) | Stack set, version pinning, baseline config. |
@@ -104,4 +105,5 @@ instruction per sentence.
 
 ## License
 
-To be decided. See PLAN.md open items.
+Apache-2.0. See [LICENSE](LICENSE).
+Corpus files carry ODC-BY attribution for their sources (spec 04.2.2).

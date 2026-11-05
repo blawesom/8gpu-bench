@@ -114,12 +114,15 @@ All documents use the ASD-STE100 standard (Simplified Technical English).
    without Qwen3.8 support).
 2. ~~Tier 2 headline MoE~~ Decided: DeepSeek-V4.1-Flash (fallback
    GLM-5.3-Flash). Kimi K3.1 Pro set as Tier 3 frontier lane.
-3. Whether the GPT-OSS-120B denominator model runs as a full lane
-   or as the Phase 3 MLPerf anchor only.
-4. SLO values for goodput (defaults in spec 06).
+3. ~~GPT-OSS-120B role~~ Decided: Phase 3 MLPerf anchor only, not a
+   full campaign lane.
+4. ~~SLO values~~ Ratified: TTFT p90 below 1 000 ms, TPOT p90 below
+   50 ms (spec 06.4).
 5. System list per Phase 4 (availability, cost).
 6. Whether LMDeploy and llama.cpp enter the core set after the pilot.
-7. PL-4 lane scope: which SUTs run native FP4 (see spec 04.4).
+7. ~~PL-4 lane scope~~ Ratified (spec 04.1.4.6): native FP4 on
+   SUT-2/3 (NVFP4) and SUT-4/5/6 (MXFP4). SUT-1 emulation only, EMU
+   flag. SUT-7 after the pilot.
 8. ~~Payload profile registry~~ Done: PF-1 to PF-5 in spec 04.
    ~~PF-3 data source~~ Decided: WildChat-1M (ODC-BY). LMSYS-Chat-1M
    is a recipe-only fallback. Confirm the corpus file schema of both
