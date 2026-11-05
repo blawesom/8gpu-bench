@@ -72,9 +72,14 @@
       register: rocm_gpus
       changed_when: false
 
+    # rocm-smi --json keys the cards as card0 ... card7 at the top
+    # level. There is no "card" list. Verify against the pinned ROCm
+    # version at Phase 2 (PLAN item 12).
     - name: Assert exactly 8 GPUs are visible
       ansible.builtin.assert:
-        that: (rocm_gpus.stdout | from_json).card.length | default(0) == 8
+        that: >-
+          (rocm_gpus.stdout | from_json).keys()
+          | select('search', '^card[0-9]+$') | list | length == 8
         fail_msg: "Expected 8 GPUs. Output: {{ rocm_gpus.stdout }}"
 
 # ------------------------------------------------------------------ INTEL

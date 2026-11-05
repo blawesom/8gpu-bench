@@ -1,12 +1,19 @@
 #!/usr/bin/env bash
 # 8gpu-bench GPU telemetry sampler (spec 06.6).
-# Writes one CSV per day. One row per sample, per GPU.
+# Writes one CSV per UTC day. One row per sample, per GPU.
 # Columns: timestamp, gpu_index, power_w, temp_c, memory_used_mb, util_pct
+#
+# Timing: the loop sleeps until the next tick, not for a fixed
+# interval after the sample. The sample period is INTERVAL even when
+# the query itself takes time (validity check V5 needs 1 Hz).
 set -u
 
 OUT_DIR="{{ telemetry_output_dir }}"
 INTERVAL={{ telemetry_interval_seconds }}
 VENDOR="{{ gpu_vendor | default('unknown') }}"
+
+mkdir -p "${OUT_DIR}"
+next_tick=$(date +%s)
 
 while true; do
   TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
@@ -14,22 +21,58 @@ while true; do
 
   case "${VENDOR}" in
     nvidia)
+      # power.draw (W), temperature.gpu (C), memory.used (MiB),
+      # utilization.gpu (%). Values are plain numbers with nounits.
       nvidia-smi --query-gpu=index,power.draw,temperature.gpu,memory.used,utilization.gpu \
         --format=csv,noheader,nounits | while IFS=',' read -r idx pw temp mem util; do
-        printf '%s,%s,%s,%s,%s,%s\n' \
-          "${TS}" "$(echo "${idx}" | tr -d ' ')" \
-          "$(echo "${pw}" | tr -d ' ')" "$(echo "${temp}" | tr -d ' ')" \
-          "$(echo "${mem}" | tr -d ' ')" "$(echo "${util}" | tr -d ' ')" >> "${OUT}"
-      done
+          printf '%s,%s,%s,%s,%s,%s\n' \
+            "${TS}" "$(echo "${idx}" | tr -d ' ')" \
+            "$(echo "${pw}" | tr -d ' ')" "$(echo "${temp}" | tr -d ' ')" \
+            "$(echo "${mem}" | tr -d ' ')" "$(echo "${util}" | tr -d ' ')" >> "${OUT}"
+        done
       ;;
     amd)
-      rocm-smi --csv --showpower --showtemp --showmemuse --showuse | tail -n +2 | \
-        while IFS=',' read -r idx pw temp mem util; do
-        printf '%s,%s,%s,%s,%s,%s\n' \
-          "${TS}" "$(echo "${idx}" | tr -d ' ')" \
-          "$(echo "${pw}" | tr -d ' ')" "$(echo "${temp}" | tr -d ' ')" \
-          "$(echo "${mem}" | tr -d ' ')" "$(echo "${util}" | tr -d ' ')" >> "${OUT}"
-      done
+      # rocm-smi --json keys cards as card0...card7. Key names carry
+      # their units and differ between ROCm versions, so match by
+      # substring and strip units. PILOT-VERIFY the key names against
+      # the pinned ROCm version (PLAN item 12). VRAM is reported in
+      # MiB; --showmemuse would be a percentage, which the join does
+      # not use.
+      rocm-smi --json --showpower --showtemp --showmemvram --showuse 2>/dev/null | \
+        TS="${TS}" OUT="${OUT}" python3 - '
+import json, os, re, sys
+
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+
+def number(value):
+    if isinstance(value, dict):
+        value = value.get("value", value.get("average", ""))
+    match = re.search(r"-?\d+(?:\.\d+)?", str(value))
+    return match.group(0) if match else ""
+
+def pick(info, *needles, exclude=()):
+    for key, value in info.items():
+        low = key.lower()
+        if all(n in low for n in needles) and not any(e in low for e in exclude):
+            return number(value)
+    return ""
+
+with open(os.environ["OUT"], "a") as out:
+    for card, info in data.items():
+        if not re.fullmatch(r"card[0-9]+", card):
+            continue
+        idx = card[len("card"):]
+        power = pick(info, "power")
+        temp = pick(info, "temp")
+        vram = pick(info, "vram", "used") or pick(info, "mem", "used")
+        util = pick(info, "use", exclude=("used",)) \
+            or pick(info, "util", exclude=("used",))
+        if power or temp or vram or util:
+            out.write(f"{os.environ['TS']},{idx},{power},{temp},{vram},{util}\n")
+'
       ;;
     intel)
       # D270 pilot phase. xpu-smi output format unverified (spec 06.6.4).
@@ -43,5 +86,10 @@ while true; do
       ;;
   esac
 
-  sleep "${INTERVAL}"
+  # Sleep until the next tick so the period stays INTERVAL.
+  next_tick=$((next_tick + INTERVAL))
+  now=$(date +%s)
+  if [ "${now}" -lt "${next_tick}" ]; then
+    sleep $((next_tick - now))
+  fi
 done

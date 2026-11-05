@@ -1,6 +1,11 @@
 ---
 # Common settings for every SUT and the client (spec 05.6).
 
+# Docker Engine apt version pin (spec 02.2).
+# PIN THIS AT PHASE 2, jointly with the container digests.
+# Example: "=5:27.5.1-1~ubuntu.24.04~noble". Empty installs the latest.
+docker_apt_version: ""
+
 # Campaign identity. Recorded in the environment record (spec 07.4).
 campaign_id: "2026Q4"
 

@@ -52,6 +52,9 @@ playbooks/record.yml        Refresh the environment record
 
 - Pin the driver version per vendor at Phase 2. Freeze it for the
   campaign. Same rule as the stack pins (spec 02.2).
+- Pin `docker_apt_version` in `group_vars/all.yml` at Phase 2,
+  jointly with the driver pin. The role installs Docker from the
+  upstream apt repository (download.docker.com).
 - Driver branch and container digests are one joint decision. The
   driver must match what the pinned containers expect.
 - Stacks run from containers only. Ansible does not install vLLM,
