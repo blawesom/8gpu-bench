@@ -10,6 +10,12 @@ concurrency value in a seeded random order (spec 05.2.1), with a
 15 s soak between passes. One server start per test point and
 repetition.
 
+Placement (spec 03.2): the runner runs on the dedicated load
+client. The SUT server container is controlled through Docker over
+SSH (manifest ``server.docker_host``, for example
+``ssh://bench@sut1``); health and warmup run from the client
+against the SUT endpoint (``client.target``).
+
 The harness is a fixed instrument (spec 03.1): every stack, SUT and
 configuration lane is measured with the same tool. Cross-check tools
 (genai-perf) run only with --cross-check, after the primary results,
@@ -334,6 +340,14 @@ class Server:
     stop. The server restarts once per harness, not once per
     concurrency value.
 
+    Placement (spec 03.2): the runner runs on the dedicated load
+    client. The container lifecycle goes to the SUT through Docker
+    over SSH: set ``docker_host`` in the manifest (for example
+    ``ssh://bench@sut1``). Every docker command then carries
+    ``-H <docker_host>``. The health check and the warmup run from
+    the client against the SUT endpoint (``client.target``), so the
+    measured network path is the client-to-SUT path.
+
     The manifest controls vendor passthrough:
       - NVIDIA: set ``gpus`` (for example ``all``). Emits ``--gpus``.
       - AMD: omit ``gpus`` and set ``docker_args`` to
@@ -341,21 +355,29 @@ class Server:
       - Intel: set ``docker_args`` per the stack documentation.
     """
 
-    def __init__(self, cfg: dict, log_dir: str):
+    def __init__(self, cfg: dict, log_dir: str, target: str):
         self.cfg = cfg
         self.name = "bench-server"
         self.port = cfg["port"]
         self.log_dir = log_dir
+        self.target = target
+        self.docker_host = (cfg.get("docker_host") or "").strip()
         self.start_command: list[str] = []
         self.start_count = 0
         self.alive = False
         self._log_offset = 0
 
+    def _docker(self, *args: str) -> list[str]:
+        cmd = ["docker"]
+        if self.docker_host:
+            cmd += ["-H", self.docker_host]
+        return cmd + list(args)
+
     def start(self) -> bool:
         self.start_count += 1
-        subprocess.run(["docker", "rm", "-f", self.name],
+        subprocess.run(self._docker("rm", "-f", self.name),
                        capture_output=True)
-        cmd = ["docker", "run", "-d", "--name", self.name]
+        cmd = self._docker("run", "-d", "--name", self.name)
         if self.cfg.get("gpus"):
             cmd += ["--gpus", self.cfg["gpus"]]
         cmd += ["--shm-size", self.cfg.get("shm_size", "64g"),
@@ -376,7 +398,9 @@ class Server:
         if result.returncode != 0:
             print(result.stderr)
             return False
-        self.alive = wait_health(f"http://localhost:{self.port}/health")
+        # Health from the client against the SUT endpoint (spec 03.2),
+        # not localhost.
+        self.alive = wait_health(self.target.rstrip("/") + "/health")
         self._log_offset = 0
         return self.alive
 
@@ -385,7 +409,7 @@ class Server:
         pass scans only the content it generated (V7)."""
         if not self.alive:
             return ""
-        result = subprocess.run(["docker", "logs", self.name],
+        result = subprocess.run(self._docker("logs", self.name),
                                 capture_output=True, text=True,
                                 errors="replace")
         text = (result.stdout or "") + (result.stderr or "")
@@ -397,23 +421,25 @@ class Server:
         """Remove the container and keep its console log (spec 05.3.4).
         One log file per container start: server-<n>.log."""
         log_path = os.path.join(self.log_dir, f"server-{self.start_count}.log")
-        result = subprocess.run(["docker", "logs", self.name],
+        result = subprocess.run(self._docker("logs", self.name),
                                 capture_output=True, text=True,
                                 errors="replace")
         with open(log_path, "w", encoding="utf-8") as fh:
             fh.write(result.stdout or "")
             fh.write(result.stderr or "")
-        subprocess.run(["docker", "rm", "-f", self.name], capture_output=True)
+        subprocess.run(self._docker("rm", "-f", self.name),
+                       capture_output=True)
         self.alive = False
         time.sleep(5)
         return log_path
 
     def image_digest(self) -> str:
-        """Resolved image digest (spec 07.4). Falls back to the local
-        image ID when the image has no RepoDigest (local build)."""
+        """Resolved image digest on the SUT (spec 07.4). Falls back to
+        the local image ID when the image has no RepoDigest (local
+        build)."""
         result = subprocess.run(
-            ["docker", "image", "inspect", self.cfg["image"],
-             "--format", "{{json .RepoDigests}}"],
+            self._docker("image", "inspect", self.cfg["image"],
+                         "--format", "{{json .RepoDigests}}"),
             capture_output=True, text=True)
         try:
             digests = json.loads(result.stdout)
@@ -422,8 +448,8 @@ class Server:
         except (json.JSONDecodeError, TypeError):
             pass
         result = subprocess.run(
-            ["docker", "image", "inspect", self.cfg["image"],
-             "--format", "{{.Id}}"],
+            self._docker("image", "inspect", self.cfg["image"],
+                         "--format", "{{.Id}}"),
             capture_output=True, text=True)
         return (result.stdout or "").strip() or "unknown"
 
@@ -943,7 +969,8 @@ def sweep_harness(cfg: dict, point: dict, corpus: str, run_dir: str,
                   server: Server, order: list | None = None,
                   extra_flags: list | None = None,
                   run_suffix: str = "",
-                  gpu_ids: list | None = None) -> list[dict]:
+                  gpu_ids: list | None = None,
+                  target: str = "") -> list[dict]:
     """One server lifecycle for the whole sweep of one harness
     (spec 05.3): start, health wait, one warmup, a 60 s thermal soak,
     then every concurrency value in the given order (randomized per
@@ -993,7 +1020,12 @@ def sweep_harness(cfg: dict, point: dict, corpus: str, run_dir: str,
                     record["flags"] += ["INVALID", "SERVER-START"]
                     record["run_finished_at"] = now_utc()
                     break
-                ok, done = warmup(f"http://localhost:{server.port}",
+                # Warmup from the client against the SUT endpoint
+                # (spec 03.2), so the warmup warms the server over the
+                # measured network path.
+                warmup_url = target if target else \
+                    f"http://localhost:{server.port}"
+                ok, done = warmup(warmup_url,
                                   cfg.get("served_model_name", cfg["model"]),
                                   warmup_rows, warm_target, timeout_s,
                                   max_tokens_cap=warm_cap)
@@ -1143,7 +1175,8 @@ def run_test_point(cfg: dict, point: dict, corpora_root: str, out_root: str,
         + (f"-{run_suffix}" if run_suffix else "")
         + f"-r{repetition}")
     os.makedirs(run_dir, exist_ok=True)
-    server = Server(cfg["server"], run_dir)
+    target = cfg["client"]["target"]
+    server = Server(cfg["server"], run_dir, target)
     digest = server.image_digest()
 
     # Seeded random value order, re-shuffled per repetition
@@ -1164,7 +1197,7 @@ def run_test_point(cfg: dict, point: dict, corpora_root: str, out_root: str,
                                  mode, server, order=order,
                                  extra_flags=extra_flags,
                                  run_suffix=run_suffix,
-                                 gpu_ids=gpu_ids)
+                                 gpu_ids=gpu_ids, target=target)
     write_run_meta(run_dir, cfg, point, corpus, digest, records, mode,
                    value_order=order, run_suffix=run_suffix)
     return records
@@ -1252,6 +1285,21 @@ def lint_manifest(cfg: dict) -> list[str]:
                 f"BASE lane: {cfg.get('stack')} server args miss the "
                 f"spec 02.4 baseline flag for {setting} (expected one "
                 f"of: {', '.join(needles)})")
+
+    # Placement (spec 03.2): the container must start on the SUT, not
+    # on the client. A remote client target with a local docker host
+    # means the container would start on the client.
+    docker_host = (cfg.get("server") or {}).get("docker_host", "")
+    target = (cfg.get("client") or {}).get("target", "")
+    if not docker_host and target:
+        from urllib.parse import urlparse
+        host = urlparse(target).hostname or ""
+        if host not in ("", "localhost", "127.0.0.1"):
+            warnings.append(
+                f"client target {target} is remote but "
+                "server.docker_host is unset: the server container "
+                "would start on the client, not the SUT (spec 03.2). "
+                "Set server.docker_host (for example ssh://bench@sut1)")
     return warnings
 
 
@@ -1474,6 +1522,7 @@ def selftest() -> int:
     lint_ok = dict(good)
     lint_ok["server"] = dict(
         image="vllm/vllm-openai:v0.32.0",
+        docker_host="ssh://bench@sut1",
         args="--model /models/m --max-num-seqs 256 "
              "--gpu-memory-utilization 0.90 --no-enable-prefix-caching")
     check("lint passes with the baseline flags",
@@ -1481,6 +1530,18 @@ def selftest() -> int:
     tuned = dict(good, lane="TUNED", server=lint_bad["server"])
     check("lint is silent on the TUNED lane",
           lint_manifest(tuned) == [])
+
+    # Placement (spec 03.2): a remote client target needs
+    # server.docker_host, or the container would start on the client.
+    misplaced = dict(good)
+    misplaced["server"] = dict(lint_ok["server"])
+    del misplaced["server"]["docker_host"]
+    check("lint warns about the missing docker_host",
+          any("docker_host" in w for w in lint_manifest(misplaced)))
+    placed = dict(misplaced)
+    placed["server"]["docker_host"] = "ssh://bench@sut1"
+    check("lint is silent with docker_host set",
+          not any("docker_host" in w for w in lint_manifest(placed)))
 
     if failures:
         print(f"selftest FAILED: {len(failures)} checks")

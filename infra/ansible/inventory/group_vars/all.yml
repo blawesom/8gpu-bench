@@ -17,6 +17,10 @@ timezone: "UTC"
 # Telemetry: 1 Hz sampling per spec 06.6.
 telemetry_interval_seconds: 1
 telemetry_output_dir: "/var/log/gpu-telemetry"
+# Read-only NFS export of the telemetry directory to the client
+# network (spec 03.2). CIDR, for example "10.0.0.0/24". Empty
+# disables the export.
+telemetry_export_net: ""
 
 # Environment record output (spec 07.4).
 env_record_dir: "/opt/8gpu-bench"

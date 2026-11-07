@@ -33,6 +33,8 @@ server:
   shm_size: 64g
   mounts:
     - /opt/models:/models:ro
+  # Placement (spec 03.2): Docker over SSH to the SUT.
+  docker_host: ssh://bench@sut1
   # TP=8: all GPUs. No gpu_ids: the telemetry slice uses all 8.
   gpus: all
   # Vendor best-known config. Record every flag here: this block is

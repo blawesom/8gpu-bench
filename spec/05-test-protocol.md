@@ -62,22 +62,28 @@ A reference point detects this drift.
    and after the last test point.
 3. Mark every reference record REFERENCE.
    Reference records never enter the headline tables.
-4. The assembler computes the reference drift:
-   the relative spread (max minus min, over the mean) of the output
-   throughput of all reference records of the campaign (spec 07.1.3).
+4. The assembler computes the reference drift per reference group:
+   one group per SUT, stack, stack version, model, precision and
+   config lane. The drift is the relative spread (max minus min,
+   over the mean) of the output throughput of the reference records
+   of the group (spec 07.1.3). The groups never pool: throughput is
+   not comparable between SUTs, so a pooled drift measures the
+   difference between the systems, not drift.
 5. The drift limit is 5% (check V8, section 7).
-   Above the limit, the assembler marks every row of the campaign
+   Above the limit, the assembler marks every row of the group
    QUALIFIED with the reason REFERENCE-DRIFT.
-   Do not rank rows of a campaign with failed drift without a re-run.
-6. A campaign with fewer than 2 reference points has an unevaluated
+   Do not rank rows of a group with failed drift without a re-run.
+6. A group with fewer than 2 reference points has an unevaluated
    V8. The assembler records this in validation.json.
    No row is demoted for an unevaluated check.
 
 ## 3. Procedure per test point
 
 1. Confirm the SUT is idle. No other process holds a GPU.
-2. Start the server with the pinned stack version.
-3. Wait for the health endpoint to pass.
+2. Start the server with the pinned stack version. The runner runs
+   on the client and starts the SUT container through Docker over
+   SSH (spec 03.2 rule 6).
+3. Wait for the health endpoint to pass, from the client.
 4. Capture the server startup log and settings.
 5. Run the warmup (spec 03.3). One warmup per server start.
 6. Run the thermal soak: wait 60 s with no load after the warmup and

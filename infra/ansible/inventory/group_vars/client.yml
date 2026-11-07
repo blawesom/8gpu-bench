@@ -9,3 +9,9 @@ genai_perf_version: "latest"
 
 # Smoke test target. Set to the first SUT to bring up.
 smoke_target_url: "http://sut1-h200:8000"
+
+# SUT telemetry share, mounted read-only for the runner (spec 03.2,
+# 06.6). Point --telemetry at telemetry_mount_to. Change the SUT by
+# changing this variable. Empty disables the mount.
+telemetry_mount_from: "sut1-h200:/var/log/gpu-telemetry"
+telemetry_mount_to: "/mnt/sut1/gpu-telemetry"

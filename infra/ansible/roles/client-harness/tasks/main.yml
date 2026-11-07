@@ -54,3 +54,31 @@
 - name: Show the versions for the environment record
   ansible.builtin.debug:
     msg: "{{ harness_versions.stdout }}"
+
+# Telemetry share (spec 03.2, 06.6): the runner slices the SUT
+# telemetry from a read-only NFS share exported by the telemetry
+# role. Set telemetry_mount_from in group_vars/client.yml (for
+# example: sut1-h200:/var/log/gpu-telemetry). To move to another
+# SUT, change the variable and re-run this role.
+- name: Install the NFS client for the telemetry share
+  ansible.builtin.apt:
+    name: nfs-common
+    state: present
+    update_cache: true
+  when: telemetry_mount_from | length > 0
+
+- name: Create the telemetry mount point
+  ansible.builtin.file:
+    path: "{{ telemetry_mount_to }}"
+    state: directory
+    mode: "0755"
+  when: telemetry_mount_from | length > 0
+
+- name: Mount the telemetry share read-only
+  ansible.posix.mount:
+    path: "{{ telemetry_mount_to }}"
+    src: "{{ telemetry_mount_from }}"
+    fstype: nfs
+    opts: ro
+    state: mounted
+  when: telemetry_mount_from | length > 0

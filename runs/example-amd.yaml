@@ -28,6 +28,8 @@ server:
   shm_size: 64g
   mounts:
     - /opt/models:/models:ro
+  # Placement (spec 03.2): Docker over SSH to the SUT.
+  docker_host: ssh://bench@sut4
   docker_args: >-
     --device /dev/kfd --device /dev/dri --group-add video --ipc=host
   # Tier 1 is TP=1: pin the server to GPU 0, so it matches gpu_ids

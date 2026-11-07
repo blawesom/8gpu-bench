@@ -38,6 +38,14 @@ Rules for cross-checks:
 3. Use a 25 GbE or faster path between the client and the SUT.
 4. No other traffic shares this path during a measured run.
 5. Sync the client clock with the same NTP source as the SUT.
+6. The runner runs on the client. It controls the SUT server
+   container through Docker over SSH (manifest field
+   `server.docker_host`). The health check and the warmup run from
+   the client against the SUT endpoint, so the measured network
+   path is the client-to-SUT path.
+7. The client reads the SUT telemetry from a read-only share
+   (for example: NFS), so the power and temperature metrics are
+   sliced by the runner (spec 06.6).
 
 ## 3. Harness configuration
 

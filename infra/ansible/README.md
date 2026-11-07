@@ -16,9 +16,10 @@ inventory/group_vars/      Vendor settings and common pins
 roles/base/                 OS prep: NTP, sysctl, limits, services
 roles/gpu-driver/           Vendor driver, GPU count check
 roles/container-runtime/    Docker plus GPU passthrough
-roles/telemetry/            1 Hz power/thermal sampler
+roles/telemetry/            1 Hz power/thermal sampler, NFS export
 roles/env-record/           Emits node-meta.json (spec 07.4)
 roles/smoke/                Smoke test (spec 03.4)
+roles/client-harness/       GuideLLM + GenAI-Perf, telemetry mount
 playbooks/site.yml          Full bring-up
 playbooks/verify.yml        Entry criteria (spec 01.3)
 playbooks/record.yml        Refresh the environment record
@@ -47,6 +48,24 @@ playbooks/record.yml        Refresh the environment record
    ```
    ansible-playbook playbooks/record.yml
    ```
+
+## Placement and telemetry share (spec 03.2)
+
+The runner runs on the client. It controls the SUT container through
+Docker over SSH (`server.docker_host` in the run manifest) and reads
+the SUT telemetry from a read-only NFS share:
+
+1. Set `telemetry_export_net` in `group_vars/all.yml` to the client
+   network CIDR. The telemetry role exports
+   `telemetry_output_dir` read-only to that network.
+2. Set `telemetry_mount_from` in `group_vars/client.yml` to
+   `<sut>:/var/log/gpu-telemetry`. The client-harness role mounts it
+   read-only at `telemetry_mount_to`.
+3. Point the runner at the mount:
+   `--telemetry /mnt/sut1/gpu-telemetry`.
+
+To move the campaign to another SUT, change `telemetry_mount_from`
+and re-run the client role.
 
 ## Pinning rules
 

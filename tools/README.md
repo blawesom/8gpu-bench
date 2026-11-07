@@ -1,7 +1,7 @@
 # Tools
 
 Phase 2 tooling for the 8gpu-bench specification. Benchmark spec
-1.1.0; the tool versions live in the repository `VERSION` file.
+1.1.1; the tool versions live in the repository `VERSION` file.
 
 ## gen-corpus.py — corpus generator (spec 04)
 
@@ -20,10 +20,15 @@ python3 tools/gen-corpus.py generate --profile PF-1 \
 python3 tools/gen-corpus.py selftest
 ```
 
-Output: `corpora/<model>/<profile>.jsonl` plus a `.meta.json` sidecar
-with sources, revisions, attribution, the corpus version, the expected
-cache hit, and the corpus checksum. The first line of each corpus
-file is a `_meta` record. Harness adapters skip it.
+Output: `corpora/<model>/<profile>.jsonl` plus
+`<profile>.warmup.jsonl` (disjoint warmup rows, spec 03.3) and a
+`.meta.json` sidecar with sources, revisions, attribution, the
+corpus version, the expected cache hit, and the corpus checksums.
+The first line of each corpus file is a `_meta` record. Harness
+adapters skip it. Rows also carry the request-shape fields
+(`ignore_eos` for the forced-output-length profiles,
+`enable_thinking: false` for Qwen models); PILOT-VERIFY that the
+harness passes row fields through to the request body at the pin.
 
 Sources (spec 04.2.2): PG-19 (session history), WildChat-1M (chat
 and prompt text for every non-session profile). Fetch records the
@@ -39,11 +44,26 @@ value in a seeded random order (spec 05.2.1), with a 15 s soak
 between passes, then server stop. One server start per test point and
 repetition.
 
+The warmup uses the separate warmup corpus
+(`<profile>.warmup.jsonl`, written by gen-corpus), which is disjoint
+from the measured rows, and caps the warmup output length
+(`warmup_max_tokens`, default 64 tokens, spec 03.3).
+
 ```
 python3 tools/run-benchmark.py --config runs/example-nvidia.yaml \
     --corpora corpora --out results/2026Q4 \
     --telemetry /mnt/sut1/gpu-telemetry
 ```
+
+Placement (spec 03.2): the runner runs on the dedicated load
+client. It starts the SUT server container through Docker over SSH
+(`server.docker_host`, for example `ssh://bench@sut1`), and the
+health check and the warmup run from the client against
+`client.target`. The telemetry directory must be readable from the
+client (the Ansible telemetry role exports it read-only over NFS;
+`--telemetry` points at the mount). Omit `docker_host` for a
+single-machine dev setup; a remote target without `docker_host`
+produces a manifest warning.
 
 The harness is a fixed instrument (spec 03.1): every stack and lane
 is measured with GuideLLM. Cross-check tools run after the primary
@@ -80,11 +100,17 @@ Validity handling (spec 05.7):
 - Failed server starts and failed warmups produce INVALID records.
   Nothing is silently dropped.
 - A failed pass is retried once (spec 04.5 rule 4).
+- A measured pass without core metrics is INVALID (MISSING-METRICS).
+  A pass killed at the run cap (1 800 s, 7 200 s production lanes,
+  spec 04.5 rule 2) is INVALID (RUN-CAP).
 - Two consecutive INVALID results stop the campaign.
 - V1 (error rate), V5 (power coverage), V6 (record completeness) and
   V7 (thermal events) are checked where data is available.
   V3 (CoV), V8 (reference drift) and V9 (comparability) are computed
   by build-results.py.
+- `lint_manifest` warns when a BASE lane misses the spec 02.4
+  baseline server flags, or when a remote target runs against a
+  local docker host (placement, spec 03.2).
 
 `--telemetry` points at the SUT telemetry directory (the output of
 the `gpu-telemetry` service). The runner slices it by run window and
@@ -126,8 +152,12 @@ python3 tools/build-results.py --campaign results/2026Q4
 
 Checks enforced (spec 05.7):
 - V1 error rate, V3 CoV (5% limit), V9 comparability category.
-- V8 reference drift (5% limit): above the limit, every row of the
-  campaign is QUALIFIED with the reason REFERENCE-DRIFT.
+- V8 reference drift (5% limit), per reference group (SUT, stack,
+  stack version, model, precision, config lane): above the limit,
+  the rows of that group are QUALIFIED with the reason
+  REFERENCE-DRIFT. Rows of stable groups keep their level.
+- A row without the core throughput metric is INVALID
+  (MISSING-METRICS).
 - Schema checks on every record and aggregate; with the `jsonschema`
   package installed, the generated results.json is validated against
   `tools/schemas/results.schema.json`.

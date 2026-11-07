@@ -38,6 +38,9 @@ server:
   shm_size: 64g
   mounts:
     - /opt/models:/models:ro
+  # Placement (spec 03.2): the runner runs on the client and controls
+  # the SUT container through Docker over SSH.
+  docker_host: ssh://bench@sut1
   # NVIDIA: --gpus. Omit for AMD and Intel.
   # Tier 1 is TP=1: pin the container to one GPU.
   gpus: device=0

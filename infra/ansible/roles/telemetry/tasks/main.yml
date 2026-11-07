@@ -27,3 +27,31 @@
     state: started
     enabled: true
     daemon_reload: true
+
+# The runner runs on the client (spec 03.2) and slices the telemetry
+# from a read-only NFS share of this directory. Set
+# telemetry_export_net in group_vars to the client network CIDR.
+# Empty disables the export (run --telemetry with a shared mount
+# instead).
+- name: Install the NFS server for the telemetry export
+  ansible.builtin.apt:
+    name: nfs-kernel-server
+    state: present
+    update_cache: true
+  when: telemetry_export_net | length > 0
+
+- name: Export the telemetry directory read-only to the client network
+  ansible.builtin.lineinfile:
+    path: /etc/exports
+    line: "{{ telemetry_output_dir }} {{ telemetry_export_net }} ro,sync,no_subtree_check"
+    create: true
+    mode: "0644"
+  when: telemetry_export_net | length > 0
+  notify: Restart nfs-kernel-server
+
+- name: Enable and start the NFS server
+  ansible.builtin.systemd:
+    name: nfs-kernel-server
+    state: started
+    enabled: true
+  when: telemetry_export_net | length > 0
