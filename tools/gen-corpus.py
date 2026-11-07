@@ -365,6 +365,26 @@ def build_sessions(spec: dict, book_stream: TokenStream, chat_stream: TokenStrea
     return main_rows, warmup_rows, stats
 
 
+def annotate_rows(rows: list[dict], profile: str, model: str) -> None:
+    """Add the request-shape fields to corpus rows.
+
+    - ignore_eos: force the output length, so the token counts meet
+      the profile (spec 04.2.2 rule 10: force the OSL, disable early
+      stop). PF-3 keeps its empirical OSL and stops at the model's
+      EOS.
+    - enable_thinking: thinking models must answer without the
+      thinking block (spec 04.1.1), so every measured row is a
+      normal answer.
+    """
+    forced_osl = profile != "PF-3"
+    thinking = "qwen" in model.lower()
+    for row in rows:
+        if forced_osl:
+            row["ignore_eos"] = True
+        if thinking:
+            row["enable_thinking"] = False
+
+
 # ---------------------------------------------------------------------------
 # Output
 # ---------------------------------------------------------------------------
@@ -439,6 +459,12 @@ def cmd_generate(args) -> int:
         else:
             rows, warmup_rows, stats = build_fixed(
                 spec, stream, tokenizer, rng, extra=args.warmup_requests)
+
+    # Request-shape fields (spec 04.2.2 rule 10, spec 04.1.1).
+    # PILOT-VERIFY: GuideLLM's json_file schema must pass these row
+    # fields through to the request body at the version pin; until
+    # then they are best-effort.
+    annotate_rows(rows + warmup_rows, args.profile, args.model)
 
     used_sources = sorted(
         {"wildchat"} | ({"pg19"} if spec["kind"] == "session" else set()))
@@ -697,6 +723,27 @@ def cmd_selftest(args) -> int:
                 failures.append(f"{profile}: checksum mismatch")
             if meta_disk["warmup_corpus_sha256"] != sha256_file(wpath):
                 failures.append(f"{profile}: warmup checksum mismatch")
+
+    # Check 6: request-shape fields (forced OSL, thinking models).
+    probe_spec = dict(PROFILES["PF-1"])
+    probe_spec["isl"] = 50
+    probe_spec["requests"] = 3
+    probe_rows, probe_warm, _ = build_fixed(
+        probe_spec, TokenStream(turn_texts, tok), tok, rng, extra=2)
+    annotate_rows(probe_rows + probe_warm, "PF-1", "Qwen/Qwen3.8-27B")
+    if not all(r.get("ignore_eos") is True
+               and r.get("enable_thinking") is False
+               for r in probe_rows + probe_warm):
+        failures.append("PF-1 rows miss ignore_eos / enable_thinking")
+    chat_spec = dict(PROFILES["PF-3"])
+    chat_spec["requests"] = 3
+    chat_rows, _, _ = build_chat(chat_spec, wildchat, tok)
+    annotate_rows(chat_rows, "PF-3", "Qwen/Qwen3.8-27B")
+    if any("ignore_eos" in r for r in chat_rows):
+        failures.append("PF-3 rows must keep the empirical OSL "
+                        "(no ignore_eos)")
+    if not all(r.get("enable_thinking") is False for r in chat_rows):
+        failures.append("PF-3 rows miss enable_thinking for Qwen")
 
     if failures:
         print("SELFTEST FAILED")

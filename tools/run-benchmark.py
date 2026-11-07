@@ -54,6 +54,16 @@ Validity handling (spec 05.7, spec 04.5):
     and V7 (thermal events) are checked where data is available.
     V3 (CoV), V8 (drift) and V9 (comparability) are computed by
     build-results.py.
+  - A measured pass without core metrics is INVALID (MISSING-
+    METRICS), never a usable result.
+  - The run cap (spec 04.5 rule 2) is enforced per pass: 1 800 s
+    (7 200 s for the production lanes). A pass killed at the cap is
+    INVALID with the flag RUN-CAP.
+
+Request shape: corpus rows carry ignore_eos (forced output length,
+spec 04.2.2 rule 10) and, for thinking models, enable_thinking
+(spec 04.1.1). PILOT-VERIFY that the harness passes the row fields
+through to the request body at the version pin.
 
 Adapter status (verified against the upstream docs, Nov 2026):
   GuideLLM adapter: matches the documented 0.7.x CLI
@@ -129,6 +139,14 @@ def load_versions() -> dict:
 REQUEST_TIMEOUTS = {"PF-8": 3600, "PF-9": 3600}
 DEFAULT_REQUEST_TIMEOUT = 300
 
+# Run cap (spec 04.5 rule 2): a run is complete when the request
+# count finishes or the time limit elapses. 7 200 s for the
+# production lanes. PILOT-VERIFY: prefer a harness-native time
+# constraint at the version pin; the subprocess kill below is the
+# backstop, and a killed pass is INVALID with the flag RUN-CAP.
+DEFAULT_RUN_CAP_S = 1800
+PROFILE_RUN_CAPS = {"PF-8": 7200, "PF-9": 7200}
+
 # Warmup: 100 requests or 60 s, whichever is longer (spec 03.3).
 WARMUP_MIN_SECONDS = 60
 WARMUP_CONSECUTIVE_FAILURES = 3
@@ -175,9 +193,11 @@ def now_utc() -> str:
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def run(cmd: list[str], capture: bool = True) -> subprocess.CompletedProcess:
+def run(cmd: list[str], capture: bool = True,
+        timeout: float | None = None) -> subprocess.CompletedProcess:
     print(f"+ {' '.join(shlex.quote(c) for c in cmd)}", flush=True)
-    return subprocess.run(cmd, capture_output=capture, text=True)
+    return subprocess.run(cmd, capture_output=capture, text=True,
+                          timeout=timeout)
 
 
 def wait_health(url: str, timeout_s: int = 1800, interval_s: int = 5) -> bool:
@@ -847,13 +867,28 @@ def run_measured(cfg: dict, point: dict, corpus: str, run_dir: str,
         cfg, corpus, c, point.get("requests", 1000),
         os.path.join(raw_dir, ""), mode)
     record["command"] = " ".join(cmd)
-    result = run(cmd, capture=False)
+    run_cap = point.get("run_cap_s",
+                        PROFILE_RUN_CAPS.get(point["profile"],
+                                             DEFAULT_RUN_CAP_S))
+    record["run_cap_s"] = run_cap
+    timed_out = False
+    try:
+        result = run(cmd, capture=False, timeout=run_cap)
+    except subprocess.TimeoutExpired:
+        result = None
+        timed_out = True
+        print(f"RUN-CAP: harness killed at {run_cap} s "
+              f"(spec 04.5 rule 2)", flush=True)
     t1 = time.time()
-    record["exit_code"] = result.returncode
+    record["exit_code"] = result.returncode if result is not None else -1
     with open(os.path.join(raw_dir, "exit_code.txt"), "w") as fh:
-        fh.write(str(result.returncode))
+        fh.write(str(record["exit_code"]))
     record["run_finished_at"] = now_utc()
     record["run_window_s"] = round(t1 - t0, 1)
+    if timed_out:
+        # A killed pass loses its output; the raw files are kept for
+        # inspection.
+        record["flags"] += ["INVALID", "RUN-CAP"]
     metrics = HARNESS_EXTRACTORS[harness](raw_dir)
 
     # V7: thermal events in the server log content of this pass.
@@ -872,7 +907,8 @@ def run_measured(cfg: dict, point: dict, corpus: str, run_dir: str,
     # changed and nothing parsed). A measured pass without core
     # metrics is INVALID, never a usable result (review defect 3).
     # Cross-check rows carry no validity level, so they are exempt.
-    if harness == PRIMARY_HARNESS \
+    # A RUN-CAP pass already carries its own INVALID reason.
+    if harness == PRIMARY_HARNESS and not timed_out \
             and any(m not in metrics for m in REQUIRED_PRIMARY_METRICS):
         record["flags"] += ["INVALID", "MISSING-METRICS"]
 
@@ -1041,6 +1077,11 @@ def write_run_meta(run_dir: str, cfg: dict, point: dict, corpus: str,
         server_settings=cfg["server"].get("args", ""),
         corpus_path=os.path.abspath(corpus),
         corpus_sha256=corpus_sha256(corpus),
+        # Intended per-request timeout (spec 03.3). The runner
+        # enforces it for the warmup; enforcement inside the harness
+        # is PILOT-VERIFY at the version pin.
+        request_timeout_s=REQUEST_TIMEOUTS.get(
+            point["profile"], DEFAULT_REQUEST_TIMEOUT),
         order_seed=cfg.get("seed", 42),
         value_order=list(value_order) if value_order is not None else [],
         soak_s=dict(after_warmup=SOAK_AFTER_WARMUP_S,
@@ -1169,6 +1210,51 @@ def validate_manifest(cfg: dict) -> list[str]:
     return problems
 
 
+# Known baseline flags per stack (spec 02.4). Best-effort lint: flag
+# names move between versions, and a warning never fails a run.
+BASELINE_FLAGS = {
+    "vllm": {
+        "max sequences 256": ("--max-num-seqs",),
+        "memory utilization 0.90": ("--gpu-memory-utilization",),
+        "prefix cache off": ("--no-enable-prefix-caching",
+                             "--disable-prefix-caching"),
+    },
+    "sglang": {
+        "max sequences 256": ("--max-running-requests",),
+        "memory utilization 0.90": ("--mem-fraction-static",
+                                    "--mem-fraction"),
+        "prefix cache off": ("--disable-radix-cache",),
+    },
+}
+
+
+def lint_manifest(cfg: dict) -> list[str]:
+    """Non-fatal manifest warnings (review defect 6).
+
+    A CFG-BASE lane must carry the spec 02.4 baseline server flags.
+    The prefix-cache flag is required when the unique-prompt
+    scenario P-U runs (spec 02.4: disabled in P-U, enabled in P-S).
+    """
+    warnings = []
+    lane = str(cfg.get("lane", "BASE")).upper()
+    if lane != "BASE":
+        return warnings
+    table = BASELINE_FLAGS.get(cfg.get("stack", ""))
+    if not table:
+        return warnings
+    args = (cfg.get("server") or {}).get("args") or ""
+    scenarios = {p.get("scenario") for p in cfg.get("test_points", [])}
+    for setting, needles in table.items():
+        if setting == "prefix cache off" and "P-U" not in scenarios:
+            continue
+        if not any(needle in args for needle in needles):
+            warnings.append(
+                f"BASE lane: {cfg.get('stack')} server args miss the "
+                f"spec 02.4 baseline flag for {setting} (expected one "
+                f"of: {', '.join(needles)})")
+    return warnings
+
+
 def run_reference(cfg: dict, corpora_root: str, out_root: str,
                   telemetry_dir: str | None, label: str) -> list[dict]:
     """One reference point run (spec 05.2.2). One repetition, no
@@ -1225,6 +1311,8 @@ def main() -> int:
         for p in problems:
             print(f"  {p}", file=sys.stderr)
         return 2
+    for warning in lint_manifest(cfg):
+        print(f"manifest warning: {warning}", file=sys.stderr)
     repetitions = args.repetitions or cfg.get(
         "repetitions", DEFAULT_REPETITIONS)
 
@@ -1374,6 +1462,25 @@ def selftest() -> int:
     bad2 = dict(good, comparability="WRONG")
     check("bad comparability fails",
           any("comparability" in p for p in validate_manifest(bad2)))
+
+    # Manifest lint: a BASE lane missing the spec 02.4 baseline
+    # server flags warns (review defect 6). The P-U test point of
+    # `good` requires the prefix-cache-off flag.
+    lint_bad = dict(good)
+    lint_bad["server"] = dict(image="vllm/vllm-openai:v0.32.0",
+                              args="--model /models/m")
+    check("lint warns about the missing baseline flags",
+          sum("baseline flag" in w for w in lint_manifest(lint_bad)) == 3)
+    lint_ok = dict(good)
+    lint_ok["server"] = dict(
+        image="vllm/vllm-openai:v0.32.0",
+        args="--model /models/m --max-num-seqs 256 "
+             "--gpu-memory-utilization 0.90 --no-enable-prefix-caching")
+    check("lint passes with the baseline flags",
+          lint_manifest(lint_ok) == [])
+    tuned = dict(good, lane="TUNED", server=lint_bad["server"])
+    check("lint is silent on the TUNED lane",
+          lint_manifest(tuned) == [])
 
     if failures:
         print(f"selftest FAILED: {len(failures)} checks")

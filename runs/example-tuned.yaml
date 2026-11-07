@@ -33,15 +33,19 @@ server:
   shm_size: 64g
   mounts:
     - /opt/models:/models:ro
+  # TP=8: all GPUs. No gpu_ids: the telemetry slice uses all 8.
   gpus: all
   # Vendor best-known config. Record every flag here: this block is
-  # the TUNED lane definition. Example shape for a MoE model:
+  # the TUNED lane definition. Example shape for a MoE model.
+  # FP8 is a quantization in vLLM, not a --dtype value.
+  # PILOT-VERIFY the DP-attention flag names at the version pin
+  # (--dp-size was renamed --data-parallel-size upstream).
   args: >-
     --model /models/DeepSeek-V4.1-Flash
     --served-model-name DeepSeek-V4.1-Flash
-    --dtype float8
+    --quantization fp8
     --enable-dp-attention
-    --dp-size 8
+    --data-parallel-size 8
     --enable-expert-parallel
 
 client:
