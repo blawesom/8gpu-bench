@@ -163,6 +163,15 @@ improvements. The items below were deferred to Phase 3 and later.
 They are recorded here so they are not lost. The implemented items
 are in benchmark spec 1.1.0 (see the changelog note in the README).
 
+A second pass of the same review found tooling defects that the
+tooling did not enforce. Benchmark spec 1.1.1 and the tools
+1.3.0/1.1.0 fixed the pilot blockers: run-ID collision, per-group
+reference drift, INVALID on missing core metrics, runner placement
+(client plus Docker over SSH), power over the GPU set, enforced
+baseline server flags, and the disjoint warmup corpus. The
+methodology items (statistics, V3/V8 limits, OPEN lane, sessions,
+headline choice) stay deferred for spec 1.2.
+
 | Item | Phase | Note |
 |---|---|---|
 | Open-loop lanes at saturation-relative rates (25% to 150% of saturation) | 3 | Requires a two-phase protocol: a closed-loop sweep finds the saturation point first. |
@@ -175,3 +184,4 @@ are in benchmark spec 1.1.0 (see the changelog note in the README).
 | Extended workloads: prefix cache ON/OFF, chunked prefill, speculative decoding ON/OFF, mixed short/long, multi-tenant, 24 h sustained | 4 | Classify as Core / Extended / Experimental (spec 04). |
 | Multi-node benchmarking (2 and 4 nodes, inter-node bandwidth) | 5 (V2) | Single-node scope stays for V1. |
 | Deeper code review of `tools/` | 2 | Review done in the same pass as the spec 1.1.0 changes. |
+| V2 token-count check, V4 GPU-utilization check, M22/CACHE server-metrics scrape, FEAT check | 2 | Deferred pending the harness and server schema verification at the version pin (review defect 6, manifests-plus-basics scope). |

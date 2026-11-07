@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """8gpu-bench test-point runner. Implements the spec 05.3 procedure
-(benchmark spec 1.1.0).
+(benchmark spec 1.1.1).
 
 One run manifest declares one stack on one SUT. The runner executes
 every test point in it. Per repetition of every test point it runs
@@ -95,7 +95,7 @@ import time
 import urllib.error
 import urllib.request
 
-TOOL_VERSION = "1.2.0"
+TOOL_VERSION = "1.3.0"
 
 # Thermal soak (spec 05.3 step 6): 60 s after the warmup, 15 s
 # between measured passes.
@@ -118,11 +118,11 @@ COMPARABILITY_CATEGORIES = ("STRICT", "ARCH", "HWBEST")
 def load_versions() -> dict:
     """Read the VERSION file next to the repository root (spec 00.3.5)."""
     versions = {
-        "benchmark_spec": "1.1.0",
-        "runner_version": "1.2.0",
-        "assembler_version": "1.2.0",
-        "corpus_version": "1.0.0",
-        "result_schema_version": "1.0.0",
+        "benchmark_spec": "1.1.1",
+        "runner_version": "1.3.0",
+        "assembler_version": "1.3.0",
+        "corpus_version": "1.1.0",
+        "result_schema_version": "1.1.0",
     }
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                         os.pardir, "VERSION")

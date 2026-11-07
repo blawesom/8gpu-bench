@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""8gpu-bench results assembler. Implements spec 07 (benchmark spec 1.1.0).
+"""8gpu-bench results assembler. Implements spec 07 (benchmark spec 1.1.1).
 
 Reads the runs.jsonl records of one campaign and writes to
 <campaign>/aggregate/:
@@ -129,11 +129,11 @@ NUMERIC_COLUMNS = [c for c in COLUMNS
 def load_versions() -> dict:
     """Read the VERSION file next to the repository root."""
     versions = {
-        "benchmark_spec": "1.1.0",
-        "runner_version": "1.2.0",
-        "assembler_version": "1.2.0",
-        "corpus_version": "1.0.0",
-        "result_schema_version": "1.0.0",
+        "benchmark_spec": "1.1.1",
+        "runner_version": "1.3.0",
+        "assembler_version": "1.3.0",
+        "corpus_version": "1.1.0",
+        "result_schema_version": "1.1.0",
     }
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                         os.pardir, "VERSION")

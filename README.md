@@ -98,18 +98,28 @@ tokens, so every selected model runs every lane natively.
 ## Status and next steps
 
 - Phase 0 (research): done.
-- Phase 1 (specification): this document set, benchmark spec 1.1.0
+- Phase 1 (specification): this document set, benchmark spec 1.1.1
   (see the `VERSION` file for the four versioned artifacts).
 - Phase 2 (pilot): in progress. The corpus generator, the test-point
   runner and the results assembler are in `tools/`. Example run
   manifests are in `runs/`. Next: pin versions, verify the harness
   dataset schemas, run one system per vendor end to end.
 
-The benchmark spec 1.1.0 changes (third-party review, November 2026):
-statistical reporting (confidence intervals, p10/p90, five to seven
-repetitions), randomized value order with thermal soak and reference
-points, model comparability categories (STRICT / ARCH / HWBEST),
-JSON-canonical results with an automated `validation.json`.
+The benchmark spec 1.1.0 changes (third-party review, November
+2026): statistical reporting (confidence intervals, p10/p90, five
+to seven repetitions), randomized value order with thermal soak and
+reference points, model comparability categories (STRICT / ARCH /
+HWBEST), JSON-canonical results with an automated `validation.json`.
+
+The benchmark spec 1.1.1 changes (second pass of the same review):
+the tooling now enforces what the spec promises. Reference records
+no longer collide with test-point records; the V8 drift check runs
+per reference group; a measured pass without core metrics is
+INVALID; the runner runs on the client and controls the SUT server
+through Docker over SSH; power and energy are computed over the GPU
+set; the CFG-BASE server flags of spec 02.4 are pinned in the
+manifests (and linted); the warmup uses a disjoint corpus with a
+capped output length; the run cap of spec 04.5 is enforced.
 See [PLAN.md](PLAN.md), section 8, for the deferred items.
 
 Open decisions are listed in [PLAN.md](PLAN.md), section 7.

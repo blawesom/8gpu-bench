@@ -39,7 +39,7 @@ import tempfile
 import time
 from typing import Iterable
 
-TOOL_VERSION = "1.0.0"
+TOOL_VERSION = "1.1.0"
 
 
 def corpus_version() -> str:
@@ -54,7 +54,7 @@ def corpus_version() -> str:
                     return line.partition("=")[2].strip()
     except OSError:
         pass
-    return "1.0.0"
+    return "1.1.0"
 
 # ---------------------------------------------------------------------------
 # Profile registry (spec 04.2.1)
