@@ -35,6 +35,14 @@
         "mounts": { "type": "array" },
         "gpus": { "type": "string" },
         "docker_args": { "type": ["string", "array"] },
+        "env": {
+          "type": "object",
+          "additionalProperties": { "type": ["string", "number"] }
+        },
+        "gpu_ids": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 0 }
+        },
         "args": { "type": "string" }
       }
     },

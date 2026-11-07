@@ -93,6 +93,9 @@
           "cov_pct": { "type": ["number", "string"] },
           "ci95_low": { "type": ["number", "string"] },
           "ci95_high": { "type": ["number", "string"] },
+          "power_mean_w": { "type": ["number", "string"] },
+          "power_peak_w": { "type": ["number", "string"] },
+          "power_per_gpu_mean_w": { "type": ["number", "string"] },
           "validity": { "enum": ["VALID", "QUALIFIED", "INVALID"] },
           "reasons": { "type": "array", "items": { "type": "string" } }
         }

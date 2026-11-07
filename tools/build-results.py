@@ -84,6 +84,7 @@ COLUMNS = [
     "ttft_ms_p90", "tpot_ms_p90", "itl_ms_p99", "e2e_ms_p90",
     "out_tps", "out_tps_per_gpu", "goodput_tps", "slo_concurrency",
     "hbm_peak_gb", "gpu_util_pct", "temp_max_c", "power_mean_w",
+    "power_peak_w", "power_per_gpu_mean_w",
     "j_per_1m_out", "flags", "deviation_note", "error_rate_pct",
     "success_rate_pct", "validity", "raw_dir", "generated_at",
 ]
@@ -100,6 +101,8 @@ METRIC_MAP = {
     "temp_max_c": ("temp_max_c", None),
     "hbm_peak_gb": ("hbm_peak_gb", None),
     "power_mean_w": ("power_mean_w", None),
+    "power_peak_w": ("power_peak_w", None),
+    "power_per_gpu_mean_w": ("power_per_gpu_mean_w", None),
     "error_rate_pct": ("error_rate_pct", None),
 }
 
@@ -759,7 +762,8 @@ def assemble_records(campaign_id: str, records: list[dict],
               "ci95_low", "ci95_high", "ttft_ms_p90", "tpot_ms_p90",
               "e2e_ms_p90", "out_tps_per_gpu", "success_rate_pct",
               "hbm_peak_gb", "gpu_util_pct", "temp_max_c",
-              "power_mean_w", "j_per_1m_out", "validity", "reasons")}
+              "power_mean_w", "power_peak_w", "power_per_gpu_mean_w",
+              "j_per_1m_out", "validity", "reasons")}
             for a in aggregates
         ],
     )

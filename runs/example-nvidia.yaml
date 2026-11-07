@@ -11,7 +11,7 @@ stack_version: "0.32.0"        # goes into every record verbatim
 model: Qwen/Qwen3.8-27B
 model_revision: ""             # HF commit SHA. Fill before the campaign.
 served_model_name: Qwen3.8-27B
-precision: FP8
+precision: BF16                # spec 04.1.2: Tier 1 is BF16 for all SUTs
 tp: 1
 lane: BASE                   # BASE (default) or TUNED (spec 02.4.1)
 comparability: STRICT          # spec 04.1.6: STRICT / ARCH / HWBEST
@@ -39,11 +39,22 @@ server:
   mounts:
     - /opt/models:/models:ro
   # NVIDIA: --gpus. Omit for AMD and Intel.
-  gpus: all
+  # Tier 1 is TP=1: pin the container to one GPU.
+  gpus: device=0
+  # Telemetry is sliced to these GPUs (spec 06.6): idle GPUs must
+  # not dilute power, utilization and memory (review defect 5).
+  # TP=8 manifests leave gpu_ids out (all GPUs).
+  gpu_ids: [0]
+  # Baseline server config (spec 02.4). Prefix cache is off because
+  # the test points use the unique-prompt scenario P-U. Remove this
+  # flag for P-S and P-C points.
   args: >-
     --model /models/Qwen3.8-27B
     --served-model-name Qwen3.8-27B
-    --dtype float8
+    --dtype bfloat16
+    --max-num-seqs 256
+    --gpu-memory-utilization 0.90
+    --no-enable-prefix-caching
 
 client:
   target: http://sut1:8000      # dedicated client machine (spec 03.2)

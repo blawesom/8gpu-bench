@@ -87,9 +87,13 @@ Validity handling (spec 05.7):
   by build-results.py.
 
 `--telemetry` points at the SUT telemetry directory (the output of
-the `gpu-telemetry` service). The runner slices it by run window,
-writes `power-guidellm-C<c>.csv` per run, and fills the power,
-temperature, utilization and memory metrics.
+the `gpu-telemetry` service). The runner slices it by run window and
+by the manifest `server.gpu_ids` (all GPUs when unset), writes
+`power-guidellm-C<c>.csv` per run, and fills the power, temperature,
+utilization and memory metrics. `power_mean_w` and `power_peak_w`
+are the per-timestamp sum over the GPU set (M16, M17, spec 06.6);
+`power_per_gpu_mean_w` keeps the per-GPU view. Idle GPUs never
+enter the resource metrics.
 
 Adapter status: the GuideLLM adapter matches the upstream CLI
 documentation (Nov 2026). PILOT-VERIFY the custom-dataset schema at

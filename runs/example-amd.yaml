@@ -14,7 +14,7 @@ stack_version: "0.32.0-rocm"
 model: Qwen/Qwen3.8-27B
 model_revision: ""
 served_model_name: Qwen3.8-27B
-precision: FP8
+precision: BF16                # spec 04.1.2: Tier 1 is BF16 for all SUTs
 tp: 1
 comparability: STRICT          # spec 04.1.6: STRICT / ARCH / HWBEST
 repetitions: 5                 # spec 05.4: 5 core, 7 Tier 2 headline
@@ -30,10 +30,20 @@ server:
     - /opt/models:/models:ro
   docker_args: >-
     --device /dev/kfd --device /dev/dri --group-add video --ipc=host
+  # Tier 1 is TP=1: pin the server to GPU 0, so it matches gpu_ids
+  # and the telemetry slice (spec 06.6, review defect 5).
+  env:
+    HIP_VISIBLE_DEVICES: "0"
+  gpu_ids: [0]
+  # Baseline server config (spec 02.4). Prefix cache is off because
+  # the test points use the unique-prompt scenario P-U.
   args: >-
     --model /models/Qwen3.8-27B
     --served-model-name Qwen3.8-27B
-    --dtype float8
+    --dtype bfloat16
+    --max-num-seqs 256
+    --gpu-memory-utilization 0.90
+    --no-enable-prefix-caching
 
 client:
   target: http://sut4:8000

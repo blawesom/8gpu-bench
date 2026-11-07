@@ -61,10 +61,14 @@ They are secondary. Never use them as the only comparison basis.
 
 | ID | Metric | Unit | Definition |
 |---|---|---|---|
-| M12 | HBM usage peak | GB | Max GPU memory used during the run. |
-| M13 | HBM usage mean | GB | Mean over the measured run. |
-| M14 | GPU utilization | % | Mean compute utilization over the measured run. |
-| M15 | GPU temperature max | C | Peak over the run. |
+| M12 | HBM usage peak | GB | Max memory used by one GPU of the GPU set, during the run. |
+| M13 | HBM usage mean | GB | Mean over the measured run, over the GPU set. |
+| M14 | GPU utilization | % | Mean compute utilization over the measured run, over the GPU set. |
+| M15 | GPU temperature max | C | Peak over the run, over the GPU set. |
+
+The GPU set is the set of GPUs the server uses (for example: 1 GPU
+for TP=1, 8 GPUs for TP=8). The manifest field `server.gpu_ids`
+records it. Idle GPUs never enter M12 to M15.
 
 ## 6. Power metrics
 
@@ -79,8 +83,12 @@ Power rules:
 1. Sample at 1 Hz or faster over the whole measured run.
 2. Use per-GPU package power where the tool gives it.
    Otherwise use the power-meter value at the system inlet.
-3. Record which source (GPU sensors or meter) in the environment record.
-4. If no power data is available (for example: D270 early tooling),
+3. M16 and M17 are the sum of the per-GPU package power of the GPU
+   set, averaged (M16) or peaked (M17) over the run. Energy metrics
+   M18 and M19 use M16 with the node throughput, so the sum is
+   required for them to be correct at TP=8.
+4. Record which source (GPU sensors or meter) in the environment record.
+5. If no power data is available (for example: D270 early tooling),
    report M16 to M19 as N/A with the reason.
 
 ## 7. Cache metrics

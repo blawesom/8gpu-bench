@@ -337,6 +337,8 @@ class Server:
                 "-p", f"{self.port}:{self.cfg.get('container_port', 8000)}"]
         for mount in self.cfg.get("mounts", []):
             cmd += ["-v", mount]
+        for key, value in (self.cfg.get("env") or {}).items():
+            cmd += ["-e", f"{key}={value}"]
         extra = self.cfg.get("docker_args", "")
         if isinstance(extra, list):
             extra = " ".join(extra)
@@ -601,15 +603,41 @@ HARNESS_EXTRACTORS = {
 # ---------------------------------------------------------------------------
 
 
-def slice_telemetry(telemetry_dir: str, t0: float, t1: float,
-                    power_csv: str | None = None) -> dict | None:
-    """Slice the SUT telemetry CSV by the run window.
+def _parse_float(value: str) -> float | None:
+    try:
+        return float(value)
+    except ValueError:
+        return None
 
-    The sampler writes one file per UTC day with columns:
-    timestamp, gpu_index, power_w, temp_c, memory_used_mb, util_pct.
+
+def slice_telemetry(telemetry_dir: str, t0: float, t1: float,
+                    power_csv: str | None = None,
+                    gpu_ids: list | None = None) -> dict | None:
+    """Slice the SUT telemetry CSV by the run window and aggregate.
+
+    The sampler writes one file per UTC day, one row per GPU, with
+    columns: timestamp, gpu_index, power_w, temp_c, memory_used_mb,
+    util_pct.
+
+    The slice keeps only the GPUs the server uses (``gpu_ids``; all
+    GPUs when None) and aggregates per timestamp (review defect 5):
+
+    - ``power_mean_w``: mean over time of the per-timestamp sum of
+      the per-GPU package power of the used GPUs (M16, system power).
+    - ``power_peak_w``: peak of that sum (M17).
+    - ``power_per_gpu_mean_w``: mean of the individual per-GPU
+      readings (transparency).
+    - ``hbm_peak_gb``, ``gpu_util_pct`` and the temperatures are over
+      the used GPUs only, so idle GPUs never dilute the result.
+
+    A missing reading in one field (for example the AMD edge sensor
+    that reports N/A temperatures) does not discard the row: the
+    other fields of the row still count.
     """
     import glob as _glob
-    stamps: set[int] = set()
+    used = set(gpu_ids) if gpu_ids else None
+    node_power: dict[int, float] = {}   # timestamp -> sum over GPUs
+    power_stamps: set[int] = set()
     powers: list[float] = []
     temps: list[float] = []
     temp_order: list[float] = []
@@ -625,34 +653,55 @@ def slice_telemetry(telemetry_dir: str, t0: float, t1: float,
                     ts = parse_iso8601(row[0])
                     if ts is None or not (t0 - 1.0 <= ts <= t1 + 1.0):
                         continue
-                    try:
-                        powers.append(float(row[2]))
-                        temp = float(row[3])
-                        temps.append(temp)
-                        mems.append(float(row[4]))
-                        utils.append(float(row[5]))
-                    except ValueError:
+                    if used is not None:
+                        gpu_index = _parse_float(row[1])
+                        if gpu_index is None \
+                                or int(gpu_index) not in used:
+                            continue
+                    power = _parse_float(row[2])
+                    temp = _parse_float(row[3])
+                    mem = _parse_float(row[4])
+                    util = _parse_float(row[5])
+                    if power is None and temp is None and mem is None \
+                            and util is None:
                         continue
-                    stamps.add(int(ts))
-                    temp_order.append(temp)
+                    if power is not None:
+                        powers.append(power)
+                        power_stamps.add(int(ts))
+                        node_power[int(ts)] = \
+                            node_power.get(int(ts), 0.0) + power
+                    if temp is not None:
+                        temps.append(temp)
+                        temp_order.append(temp)
+                    if mem is not None:
+                        mems.append(mem)
+                    if util is not None:
+                        utils.append(util)
                     out_rows.append(row)
         except OSError:
             continue
-    if not stamps:
+    if not power_stamps:
         return None
     if power_csv and out_rows:
         with open(power_csv, "w", encoding="utf-8", newline="") as fh:
             csv.writer(fh).writerows(out_rows)
     duration = max(t1 - t0 + 1.0, 1.0)
-    return dict(
-        power_mean_w=round(sum(powers) / len(powers), 1),
-        temp_max_c=round(max(temps), 1),
-        temp_first_c=round(temp_order[0], 1),
-        temp_last_c=round(temp_order[-1], 1),
-        hbm_peak_gb=round(max(mems) / 1024.0, 1),
-        gpu_util_pct=round(sum(utils) / len(utils), 1),
-        power_coverage_pct=round(100.0 * len(stamps) / duration, 1),
+    node_values = list(node_power.values())
+    tele = dict(
+        power_mean_w=round(sum(node_values) / len(node_values), 1),
+        power_peak_w=round(max(node_values), 1),
+        power_per_gpu_mean_w=round(sum(powers) / len(powers), 1),
+        power_coverage_pct=round(100.0 * len(power_stamps) / duration, 1),
     )
+    if temps:
+        tele["temp_max_c"] = round(max(temps), 1)
+        tele["temp_first_c"] = round(temp_order[0], 1)
+        tele["temp_last_c"] = round(temp_order[-1], 1)
+    if mems:
+        tele["hbm_peak_gb"] = round(max(mems) / 1024.0, 1)
+    if utils:
+        tele["gpu_util_pct"] = round(sum(utils) / len(utils), 1)
+    return tele
 
 
 def count_thermal_events(log_text: str) -> int:
@@ -826,8 +875,9 @@ def run_measured(cfg: dict, point: dict, corpus: str, run_dir: str,
             gpu_ids=gpu_ids)
         if tele:
             metrics.update(tele)
-            record["temp_start_c"] = tele["temp_first_c"]
-            record["temp_end_c"] = tele["temp_last_c"]
+            if "temp_first_c" in tele:
+                record["temp_start_c"] = tele["temp_first_c"]
+                record["temp_end_c"] = tele["temp_last_c"]
             if tele["power_coverage_pct"] < MIN_POWER_COVERAGE_PCT:
                 record["flags"] += ["INVALID", "POWER-COVERAGE"]
 
@@ -1267,6 +1317,30 @@ def selftest() -> int:
     check("empty extraction lacks the core metrics (INVALID path)",
           any(m not in empty_metrics
               for m in REQUIRED_PRIMARY_METRICS))
+
+    # Telemetry (review defect 5): power sums per timestamp over the
+    # used GPUs only, and a N/A field in one column does not discard
+    # the rest of the row.
+    with _tempfile.TemporaryDirectory() as tmp:
+        day = os.path.join(tmp, "2026-11-05.csv")
+        with open(day, "w", encoding="utf-8") as fh:
+            fh.write("2026-11-05T00:00:00Z,0,500.0,50,10000,90\n")
+            fh.write("2026-11-05T00:00:00Z,1,520.0,N/A,12000,92\n")
+            fh.write("2026-11-05T00:00:00Z,2,60.0,40,2000,5\n")
+            fh.write("2026-11-05T00:00:01Z,0,480.0,51,10000,91\n")
+            fh.write("2026-11-05T00:00:01Z,1,490.0,N/A,12000,93\n")
+            fh.write("2026-11-05T00:00:01Z,2,60.0,40,2000,5\n")
+        t0 = datetime.datetime(2026, 11, 5,
+                               tzinfo=datetime.timezone.utc).timestamp()
+        tele = slice_telemetry(tmp, t0, t0 + 1.0, gpu_ids=[0, 1])
+    check("telemetry sums power over the used GPUs only",
+          tele is not None and tele["power_mean_w"] == 995.0
+          and tele["power_peak_w"] == 1020.0
+          and tele["power_per_gpu_mean_w"] == 497.5)
+    check("telemetry N/A temperature keeps the power reading",
+          tele is not None and tele["temp_max_c"] == 51.0
+          and tele["gpu_util_pct"] == 91.5
+          and tele["hbm_peak_gb"] == 11.7)
 
     check("valid manifest passes", validate_manifest(good) == [])
     bad = {k: v for k, v in good.items()}
