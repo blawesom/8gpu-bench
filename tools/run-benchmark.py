@@ -703,15 +703,21 @@ def warmup(url: str, model: str, rows: list[dict], target: int,
 def base_record(cfg: dict, point: dict, harness: str, c: int,
                 repetition: int, run_dir: str,
                 extra_flags: list | None = None,
-                value_order: int | None = None) -> dict:
+                value_order: int | None = None,
+                run_suffix: str = "") -> dict:
     lane = str(cfg.get("lane", "BASE")).upper()
     mode = str(point.get("mode", "closed")).lower()
     tag = f"R{c}" if mode == "open" else f"C{c}"
     raw_dir = os.path.join(run_dir, HARNESS_DIRS[harness], tag)
     primary = harness == PRIMARY_HARNESS
+    # The run suffix (for example REF-start) is part of the run_id, not
+    # just the directory name. Without it, reference records collide
+    # with test-point records that share profile, scenario, regime,
+    # value and repetition, and the assembler drops one silently.
+    suffix = f"-{run_suffix}" if run_suffix else ""
     record = dict(
         run_id=f"{cfg['run_id_prefix']}-{point['profile']}-{point['scenario']}"
-               f"-{point['regime']}-{tag}-r{repetition}-{harness}",
+               f"-{point['regime']}-{tag}-r{repetition}-{harness}{suffix}",
         campaign_id=cfg.get("campaign_id"),
         sut=cfg["sut"], stack=cfg["stack"],
         stack_version=cfg["stack_version"], harness=harness,
@@ -754,7 +760,9 @@ def run_measured(cfg: dict, point: dict, corpus: str, run_dir: str,
                  harness: str, c: int, repetition: int,
                  telemetry_dir: str | None, mode: str,
                  server: Server, value_order: int | None = None,
-                 extra_flags: list | None = None) -> dict:
+                 extra_flags: list | None = None,
+                 run_suffix: str = "",
+                 gpu_ids: list | None = None) -> dict:
     """One measured pass: harness run, extraction, validity checks.
 
     The server is already running and warmed up (sweep_harness).
@@ -763,7 +771,8 @@ def run_measured(cfg: dict, point: dict, corpus: str, run_dir: str,
     """
     tag = f"R{c}" if mode == "open" else f"C{c}"
     record = base_record(cfg, point, harness, c, repetition, run_dir,
-                         extra_flags=extra_flags, value_order=value_order)
+                         extra_flags=extra_flags, value_order=value_order,
+                         run_suffix=run_suffix)
     raw_dir = record["raw_dir"]
 
     # Step 7 / step 10: measured run with the harness.
@@ -799,7 +808,8 @@ def run_measured(cfg: dict, point: dict, corpus: str, run_dir: str,
     if telemetry_dir:
         tele = slice_telemetry(
             telemetry_dir, t0, t1,
-            os.path.join(run_dir, f"power-{HARNESS_DIRS[harness]}-{tag}.csv"))
+            os.path.join(run_dir, f"power-{HARNESS_DIRS[harness]}-{tag}.csv"),
+            gpu_ids=gpu_ids)
         if tele:
             metrics.update(tele)
             record["temp_start_c"] = tele["temp_first_c"]
@@ -820,7 +830,9 @@ def sweep_harness(cfg: dict, point: dict, corpus: str, run_dir: str,
                   harness: str, values: list, repetition: int,
                   telemetry_dir: str | None, mode: str,
                   server: Server, order: list | None = None,
-                  extra_flags: list | None = None) -> list[dict]:
+                  extra_flags: list | None = None,
+                  run_suffix: str = "",
+                  gpu_ids: list | None = None) -> list[dict]:
     """One server lifecycle for the whole sweep of one harness
     (spec 05.3): start, health wait, one warmup, a 60 s thermal soak,
     then every concurrency value in the given order (randomized per
@@ -853,7 +865,8 @@ def sweep_harness(cfg: dict, point: dict, corpus: str, run_dir: str,
                     record = base_record(cfg, point, harness, c,
                                          repetition, run_dir,
                                          extra_flags=extra_flags,
-                                         value_order=idx + 1)
+                                         value_order=idx + 1,
+                                         run_suffix=run_suffix)
                     record["flags"] += ["INVALID", "SERVER-START"]
                     record["run_finished_at"] = now_utc()
                     break
@@ -871,7 +884,8 @@ def sweep_harness(cfg: dict, point: dict, corpus: str, run_dir: str,
                     record = base_record(cfg, point, harness, c,
                                          repetition, run_dir,
                                          extra_flags=extra_flags,
-                                         value_order=idx + 1)
+                                         value_order=idx + 1,
+                                         run_suffix=run_suffix)
                     record["flags"] += ["INVALID", "WARMUP"]
                     record["run_finished_at"] = now_utc()
                     break
@@ -883,7 +897,9 @@ def sweep_harness(cfg: dict, point: dict, corpus: str, run_dir: str,
             record = run_measured(cfg, point, corpus, run_dir, harness, c,
                                   repetition, telemetry_dir, mode, server,
                                   value_order=idx + 1,
-                                  extra_flags=extra_flags)
+                                  extra_flags=extra_flags,
+                                  run_suffix=run_suffix,
+                                  gpu_ids=gpu_ids)
             if "INVALID" not in record["flags"] or attempt == 2:
                 break
             # The server may have died mid-pass. Restart for the retry.
@@ -897,7 +913,8 @@ def sweep_harness(cfg: dict, point: dict, corpus: str, run_dir: str,
 
 def write_run_meta(run_dir: str, cfg: dict, point: dict, corpus: str,
                    digest: str, passes: list[dict], mode: str = "closed",
-                   value_order: list | None = None) -> None:
+                   value_order: list | None = None,
+                   run_suffix: str = "") -> None:
     """Per-run environment record (spec 07.4).
 
     The node-level fields (OS, driver, BIOS) come from the Ansible
@@ -917,9 +934,10 @@ def write_run_meta(run_dir: str, cfg: dict, point: dict, corpus: str,
             temp_end_c=p.get("temp_end_c", ""),
             command=p.get("command", ""),
         ))
+    suffix = f"-{run_suffix}" if run_suffix else ""
     meta = dict(
         run_id=f"{cfg['run_id_prefix']}-{point['profile']}-{point['scenario']}"
-               f"-{point['regime']}",
+               f"-{point['regime']}{suffix}",
         campaign_id=cfg.get("campaign_id"),
         sut=cfg["sut"], stack=cfg["stack"],
         stack_version=cfg["stack_version"],
@@ -1010,13 +1028,16 @@ def run_test_point(cfg: dict, point: dict, corpora_root: str, out_root: str,
     records: list[dict] = []
     # One server lifecycle per harness sweep: the primary harness
     # sweeps all values, then the server stops (spec 05.3).
+    gpu_ids = cfg["server"].get("gpu_ids")
     for harness in harnesses:
         records += sweep_harness(cfg, point, corpus, run_dir, harness,
                                  values, repetition, telemetry_dir,
                                  mode, server, order=order,
-                                 extra_flags=extra_flags)
+                                 extra_flags=extra_flags,
+                                 run_suffix=run_suffix,
+                                 gpu_ids=gpu_ids)
     write_run_meta(run_dir, cfg, point, corpus, digest, records, mode,
-                   value_order=order)
+                   value_order=order, run_suffix=run_suffix)
     return records
 
 
@@ -1209,6 +1230,21 @@ def selftest() -> int:
         test_points=[dict(profile="PF-1", scenario="P-U", regime="W-ON",
                           concurrency=[1, 32])],
     )
+    # Run IDs: a reference record must never collide with a test-point
+    # record that shares profile, scenario, regime, value and
+    # repetition. The assembler deduplicates by run_id (review defect 1).
+    import tempfile as _tempfile
+    point = dict(profile="PF-1", scenario="P-U", regime="W-ON",
+                 mode="closed")
+    with _tempfile.TemporaryDirectory() as tmp:
+        tp_rec = base_record(good, point, "guidellm", 32, 1, tmp)
+        ref_rec = base_record(good, point, "guidellm", 32, 1, tmp,
+                              extra_flags=["REFERENCE"],
+                              run_suffix="REF-start")
+    check("reference run_id does not collide with the test point",
+          tp_rec["run_id"] != ref_rec["run_id"]
+          and ref_rec["run_id"].endswith("-REF-start"))
+
     check("valid manifest passes", validate_manifest(good) == [])
     bad = {k: v for k, v in good.items()}
     bad.pop("comparability")

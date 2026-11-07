@@ -35,13 +35,25 @@
     },
     "reference": {
       "type": "object",
-      "required": ["count", "throughputs_tps", "drift_pct",
-                   "limit_pct", "pass"],
+      "required": ["groups", "pass"],
       "properties": {
-        "count": { "type": "integer", "minimum": 0 },
-        "throughputs_tps": { "type": "array", "items": { "type": "number" } },
-        "drift_pct": { "type": ["number", "string"] },
-        "limit_pct": { "type": "number" },
+        "groups": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["key", "count", "throughputs_tps", "drift_pct",
+                         "limit_pct", "pass"],
+            "properties": {
+              "key": { "type": "string" },
+              "count": { "type": "integer", "minimum": 0 },
+              "throughputs_tps": { "type": "array", "items": { "type": "number" } },
+              "drift_pct": { "type": ["number", "string"] },
+              "limit_pct": { "type": "number" },
+              "pass": { "type": ["boolean", "null"] },
+              "note": { "type": "string" }
+            }
+          }
+        },
         "pass": { "type": ["boolean", "null"] },
         "note": { "type": "string" }
       }

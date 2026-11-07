@@ -13,7 +13,9 @@ Validity (spec 05.7):
   Per run:        V1 error rate, V6 record completeness, plus the
                   failure flags written by the runner (V5, V7).
   Per test point: V3 CoV across repetitions, V9 comparability category.
-  Per campaign:   V8 reference drift.
+  Per drift group (SUT, stack, model, precision, lane):
+                  V8 reference drift. A failed group demotes only its
+                  own rows.
   Levels: VALID / QUALIFIED / INVALID (spec 05.7.1). Cross-check and
   reference rows carry no validity level.
 
@@ -204,18 +206,33 @@ def expected_comparability(model: str, precision: str) -> str:
 
 
 def read_runs(paths: list[str]) -> list[dict]:
-    """Read runs.jsonl records. Deduplicates by run_id (last wins) and
-    drops exact duplicate lines, so re-assembling an appended file is
-    idempotent."""
+    """Read runs.jsonl records. Deduplicates by run_id (last wins), so
+    re-assembling an appended file is idempotent and a re-run of a
+    stopped campaign overwrites its stale record.
+
+    Two records with the same run_id but different content is a tool
+    bug (for example the old runner collision between reference and
+    test-point records, review defect 1). Keep the last one, but warn
+    loudly so it is never silent again."""
     records: dict[str, dict] = {}
+    seen: dict[str, str] = {}
     for pattern in paths:
         for path in sorted(glob.glob(pattern, recursive=True)):
             with open(path, "r", encoding="utf-8") as fh:
                 for line in fh:
                     line = line.strip()
-                    if line:
-                        rec = json.loads(line)
-                        records[rec["run_id"]] = rec
+                    if not line:
+                        continue
+                    rec = json.loads(line)
+                    run_id = rec["run_id"]
+                    digest = hashlib.sha256(line.encode()).hexdigest()
+                    if run_id in seen and seen[run_id] != digest:
+                        print(f"WARNING: run_id {run_id} appears more than "
+                              f"once with different content; keeping the "
+                              f"last record. Check the runner version.",
+                              file=sys.stderr)
+                    seen[run_id] = digest
+                    records[run_id] = rec
     return list(records.values())
 
 
@@ -399,31 +416,76 @@ def aggregate_test_point(campaign_id: str, key: tuple,
     return agg
 
 
-def reference_drift(records: list[dict]) -> dict:
-    """V8: relative spread of the reference point output throughput
-    over the campaign (spec 05.2.2)."""
-    tps = []
+def reference_group_key(fields: dict) -> str:
+    """The drift group of a record: SUT, stack, stack version, model,
+    precision and config lane (spec 05.2.2).
+
+    Drift is computed per group. Output throughput is not comparable
+    across groups: pooling the reference points of several SUTs (or
+    several lanes) measures the difference between the systems, not
+    drift, and demotes every row of the campaign.
+    """
+    key = (fields.get("sut", ""), fields.get("stack", ""),
+           fields.get("stack_version", ""), fields.get("model", ""),
+           fields.get("precision", ""), fields.get("config_lane", ""))
+    return group_key_string(key)
+
+
+def _drift_entry(tps: list[float]) -> dict:
+    if len(tps) < 2:
+        # V8 is unevaluated for this group: no rows are demoted, the
+        # gap is recorded in validation.json (spec 05.2.2).
+        return dict(count=len(tps), throughputs_tps=sorted(tps),
+                    drift_pct="", limit_pct=MAX_REFERENCE_DRIFT_PCT,
+                    **{"pass": None},
+                    note="fewer than 2 reference points, V8 unevaluated")
+    mean = statistics.mean(tps)
+    drift = 100.0 * (max(tps) - min(tps)) / mean if mean > 0 else 0.0
+    return dict(count=len(tps), throughputs_tps=sorted(tps),
+                drift_pct=round(drift, 2),
+                limit_pct=MAX_REFERENCE_DRIFT_PCT,
+                **{"pass": drift < MAX_REFERENCE_DRIFT_PCT})
+
+
+def reference_drift_groups(records: list[dict]) -> dict[str, dict]:
+    """V8: relative spread of the reference point output throughput,
+    per drift group (spec 05.2.2)."""
+    groups: dict[tuple, list[float]] = {}
     for rec in records:
         if "REFERENCE" not in rec.get("flags", []):
             continue
         if rec.get("harness") != "guidellm":
             continue
         value = (rec.get("metrics") or {}).get("output_throughput_mean")
-        if isinstance(value, (int, float)):
-            tps.append(float(value))
-    if len(tps) < 2:
-        # V8 is unevaluated: no rows are demoted, the gap is recorded
-        # in validation.json (spec 05.2.2).
-        return dict(count=len(tps), throughputs_tps=tps, drift_pct="",
-                    limit_pct=MAX_REFERENCE_DRIFT_PCT,
-                    **{"pass": None},
-                    note="fewer than 2 reference points, V8 unevaluated")
-    mean = statistics.mean(tps)
-    drift = 100.0 * (max(tps) - min(tps)) / mean if mean > 0 else 0.0
-    drift = round(drift, 2)
-    return dict(count=len(tps), throughputs_tps=sorted(tps),
-                drift_pct=drift, limit_pct=MAX_REFERENCE_DRIFT_PCT,
-                **{"pass": drift < MAX_REFERENCE_DRIFT_PCT})
+        if not isinstance(value, (int, float)):
+            continue
+        key = (rec.get("sut", ""), rec.get("stack", ""),
+               rec.get("stack_version", ""), rec.get("model", ""),
+               rec.get("precision", ""), rec.get("config_lane", ""))
+        groups.setdefault(key, []).append(float(value))
+    out: dict[str, dict] = {}
+    for key, tps in groups.items():
+        entry = _drift_entry(tps)
+        entry["key"] = group_key_string(key)
+        out[group_key_string(key)] = entry
+    return out
+
+
+def reference_block(groups: dict[str, dict]) -> dict:
+    """The reference section of results.json and validation.json."""
+    passes = [g["pass"] for g in groups.values()]
+    if not passes:
+        ref_pass, note = None, "no reference records, V8 unevaluated"
+    elif any(p is False for p in passes):
+        ref_pass, note = False, ""
+    elif any(p is None for p in passes):
+        ref_pass, note = None, "some reference groups are unevaluated"
+    else:
+        ref_pass, note = True, ""
+    block = dict(groups=list(groups.values()), **{"pass": ref_pass})
+    if note:
+        block["note"] = note
+    return block
 
 
 # ---------------------------------------------------------------------------
@@ -630,14 +692,19 @@ def assemble_records(campaign_id: str, records: list[dict],
     dict (canonical)."""
     rows = [row_from_record(rec) for rec in records]
 
-    # V8 first: it can demote every row of the campaign to QUALIFIED.
-    drift = reference_drift(records)
-    drift_fail = drift["pass"] is False
+    # V8 first, per drift group: a failed group demotes only its own
+    # rows to QUALIFIED (spec 05.2.2).
+    drift_groups = reference_drift_groups(records)
+    reference = reference_block(drift_groups)
+
+    def drift_fail(fields: dict) -> bool:
+        return drift_groups.get(reference_group_key(fields), {}) \
+            .get("pass") is False
 
     run_levels: dict[str, tuple] = {}
     run_entries: list[dict] = []
     for rec, row in zip(records, rows):
-        level, reasons = run_validity(rec, row, drift_fail)
+        level, reasons = run_validity(rec, row, drift_fail(row))
         run_levels[rec["run_id"]] = (level, reasons)
         row["validity"] = level or ""
         run_entries.append(dict(run_id=rec["run_id"],
@@ -658,7 +725,7 @@ def assemble_records(campaign_id: str, records: list[dict],
     for key in sorted(groups, key=group_key_string):
         members = groups[key]
         agg = aggregate_test_point(campaign_id, key, members, run_levels)
-        if drift_fail and agg["validity"] == "VALID":
+        if drift_fail(members[0]) and agg["validity"] == "VALID":
             agg["validity"] = "QUALIFIED"
             agg["reasons"] = ["REFERENCE-DRIFT"] + agg["reasons"]
         aggregates.append(agg)
@@ -673,7 +740,7 @@ def assemble_records(campaign_id: str, records: list[dict],
         generator=dict(assembler_version=versions["assembler_version"],
                        benchmark_spec=versions["benchmark_spec"]),
         versions=versions,
-        reference=drift,
+        reference=reference,
         records=records,
         aggregates=[
             {k: a.get(k, "") for k in
@@ -713,7 +780,7 @@ def assemble_records(campaign_id: str, records: list[dict],
         campaign_id=campaign_id,
         generated_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         versions=versions,
-        reference=drift,
+        reference=reference,
         runs=run_entries,
         test_points=tp_entries,
         summary=dict(
@@ -790,8 +857,14 @@ def main() -> int:
     print(f"wrote {out_dir}/results.json "
           f"({len(results['records'])} records, "
           f"{len(results['aggregates'])} test points)")
-    drift = results["reference"]
-    print(f"reference drift: {drift['drift_pct']}% (pass={drift['pass']})")
+    reference = results["reference"]
+    if reference["groups"]:
+        for group in reference["groups"]:
+            print(f"reference drift {group['key']}: "
+                  f"{group['drift_pct']}% (pass={group['pass']})")
+    else:
+        note = reference.get("note", "no reference records")
+        print(f"reference drift: {note} (pass={reference['pass']})")
     return 0
 
 
@@ -887,12 +960,20 @@ def selftest() -> int:
             "2026Q4", "SUT-1", "vllm", "Qwen/Qwen3.8-27B", "BF16",
             "STRICT", "PF-1", 32, 1, 5400, flags=["CROSSCHECK"],
             harness="genai-perf"))
-        # Reference rows: small drift (about 1.5%).
+        # Reference rows of SUT-1: small drift (about 1.5%).
         for i, tps in enumerate([1000.0, 1010.0, 995.0, 1005.0], 1):
             rec = make_record("2026Q4", "SUT-1", "vllm",
                               "Qwen/Qwen3.8-27B", "BF16", "STRICT", "PF-1",
                               32, 1, tps, flags=["REFERENCE"])
             rec["run_id"] = f"2026Q4-ref-{i}"
+            records_a.append(rec)
+        # Reference rows of SUT-4: stable. The two SUTs must be
+        # evaluated as separate drift groups (review defect 2).
+        for i, tps in enumerate([5100.0, 5110.0, 5090.0], 1):
+            rec = make_record("2026Q4", "SUT-4", "vllm",
+                              "Qwen/Qwen3.8-27B", "BF16", "STRICT", "PF-1",
+                              32, 1, tps, flags=["REFERENCE"])
+            rec["run_id"] = f"2026Q4-ref-sut4-{i}"
             records_a.append(rec)
         write_campaign(camp_a, records_a)
 
@@ -940,12 +1021,43 @@ def selftest() -> int:
         check("A: CI contains the median",
               sut1["ci95_low"] <= sut1["out_tps"] <= sut1["ci95_high"])
         check("A: cov under the V3 limit", sut1["cov_pct"] < MAX_COV_PCT)
-        check("A: reference drift passes",
-              results["reference"]["pass"] is True)
+        ref_groups = results["reference"]["groups"]
+        check("A: per-group reference drift computed",
+              len(ref_groups) == 2
+              and all(g["pass"] is True for g in ref_groups))
         check("A: cross-check row has no validity",
               validation["summary"]["crosscheck"] == 1)
         check("A: reference rows counted",
-              validation["summary"]["reference"] == 4)
+              validation["summary"]["reference"] == 7)
+
+        # The assembler deduplicates by run_id, so a reference record
+        # and a test-point record must never share one (review defect
+        # 1). Build both with the runner's own record builder.
+        import importlib.util as _ilu
+        import tempfile as _tempfile
+        spec_mod = _ilu.spec_from_file_location(
+            "run_benchmark",
+            os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                         "run-benchmark.py"))
+        runner = _ilu.module_from_spec(spec_mod)
+        spec_mod.loader.exec_module(runner)
+        cfg = dict(run_id_prefix="sut1-vllm", campaign_id="2026Q4",
+                   sut="SUT-1", stack="vllm", stack_version="0.32.0",
+                   model="Qwen/Qwen3.8-27B", precision="BF16",
+                   comparability="STRICT",
+                   server=dict(image="vllm/vllm-openai:v0.32.0"),
+                   client=dict(target="http://sut1:8000",
+                               guidellm="guidellm"),
+                   test_points=[])
+        point = dict(profile="PF-1", scenario="P-U", regime="W-ON",
+                     mode="closed")
+        with _tempfile.TemporaryDirectory() as tmp:
+            tp_rec = runner.base_record(cfg, point, "guidellm", 32, 1, tmp)
+            ref_rec = runner.base_record(
+                cfg, point, "guidellm", 32, 1, tmp,
+                extra_flags=["REFERENCE"], run_suffix="REF-start")
+        check("A: runner reference and test-point run_ids differ",
+              tp_rec["run_id"] != ref_rec["run_id"])
         check("A: validation has summary",
               all(k in validation["summary"]
                   for k in ("valid", "qualified", "invalid",
@@ -967,7 +1079,9 @@ def selftest() -> int:
               and "value_order" in csv_text[0]
               and "validity" in csv_text[0])
 
-        # Campaign B: drift above the limit demotes the campaign.
+        # Campaign B: the SUT-1 drift group fails. The SUT-2 group is
+        # stable. A failed group demotes only its own rows (review
+        # defect 2): the old pooled drift would have demoted SUT-2.
         camp_b = os.path.join(tmp, "2026Q5")
         records_b = []
         for r in range(1, 6):
@@ -980,14 +1094,28 @@ def selftest() -> int:
                               32, 1, tps, flags=["REFERENCE"])
             rec["run_id"] = f"2026Q5-ref-{i}"
             records_b.append(rec)
+        for r in range(1, 6):
+            records_b.append(make_record(
+                "2026Q5", "SUT-2", "vllm", "Qwen/Qwen3.8-27B", "BF16",
+                "STRICT", "PF-1", 32, r, 6000 + 5 * r))
+        for i, tps in enumerate([6100.0, 6110.0, 6090.0], 1):
+            rec = make_record("2026Q5", "SUT-2", "vllm",
+                              "Qwen/Qwen3.8-27B", "BF16", "STRICT", "PF-1",
+                              32, 1, tps, flags=["REFERENCE"])
+            rec["run_id"] = f"2026Q5-ref-sut2-{i}"
+            records_b.append(rec)
         write_campaign(camp_b, records_b)
         out_b = os.path.join(camp_b, "aggregate")
         results_b = assemble(camp_b, out_b, versions)
-        agg_b = results_b["aggregates"][0]
-        check("B: drift fails", results_b["reference"]["pass"] is False)
-        check("B: drift demotes the rows to QUALIFIED",
-              agg_b["validity"] == "QUALIFIED"
-              and "REFERENCE-DRIFT" in agg_b["reasons"])
+        aggs_b = {(a["sut"], a["concurrency"]): a
+                  for a in results_b["aggregates"]}
+        check("B: drift fails (SUT-1 group)",
+              results_b["reference"]["pass"] is False)
+        check("B: SUT-1 rows demoted to QUALIFIED",
+              aggs_b[("SUT-1", 32)]["validity"] == "QUALIFIED"
+              and "REFERENCE-DRIFT" in aggs_b[("SUT-1", 32)]["reasons"])
+        check("B: SUT-2 rows stay VALID (per-group drift)",
+              aggs_b[("SUT-2", 32)]["validity"] == "VALID")
 
     if failures:
         print(f"selftest FAILED: {len(failures)} checks")
