@@ -290,6 +290,13 @@ def run_validity(rec: dict, row: dict, drift_fail: bool) -> tuple[str | None, li
         invalid = True
         reasons.append("RECORD-INCOMPLETE")
 
+    # A measured row without the core throughput metric is not a
+    # usable result (review defect 3). Backstop for records written
+    # before the runner enforced it.
+    if not invalid and row.get("out_tps") in ("", None):
+        invalid = True
+        reasons.append("MISSING-METRICS")
+
     # Limitation flags and missing power data -> QUALIFIED.
     for flag in QUALIFIED_FLAGS:
         if flag in flags and flag not in qualified:
@@ -940,6 +947,18 @@ def selftest() -> int:
             records_a.append(make_record(
                 "2026Q4", "SUT-1", "vllm", "Qwen/Qwen3.8-27B", "BF16",
                 "STRICT", "PF-1", 64, r, tps))
+        # C=16: one healthy repetition and one broken extraction
+        # (harness exit 0, but no core metrics). The broken row must
+        # be INVALID, not a usable result (review defect 3).
+        records_a.append(make_record(
+            "2026Q4", "SUT-1", "vllm", "Qwen/Qwen3.8-27B", "BF16",
+            "STRICT", "PF-1", 16, 1, 5400))
+        broken = make_record(
+            "2026Q4", "SUT-1", "vllm", "Qwen/Qwen3.8-27B", "BF16",
+            "STRICT", "PF-1", 16, 2, 5400)
+        broken["run_id"] = "2026Q4-broken-2"
+        broken["metrics"] = dict(ttft_p90=100.0)
+        records_a.append(broken)
         # Fallback model: ARCH.
         for r in range(1, 6):
             records_a.append(make_record(
@@ -995,6 +1014,7 @@ def selftest() -> int:
         hwb = aggs[("SUT-2", 32, "HWBEST", "deepseek-ai/DeepSeek-V4.1-Flash")]
         mismatch = aggs[("SUT-2", 64, "STRICT",
                          "deepseek-ai/DeepSeek-V4.1-Flash")]
+        broken_tp = aggs[("SUT-1", 16, "STRICT", "Qwen/Qwen3.8-27B")]
 
         check("A: results.json on disk has schema_version",
               disk["schema_version"] == versions["result_schema_version"])
@@ -1013,6 +1033,9 @@ def selftest() -> int:
         check("A: mismatched category is INVALID",
               mismatch["validity"] == "INVALID"
               and "COMPARABILITY" in mismatch["reasons"])
+        check("A: broken extraction is INVALID with MISSING-METRICS",
+              broken_tp["validity"] == "INVALID"
+              and "MISSING-METRICS" in broken_tp["reasons"])
         check("A: median computed",
               sut1["out_tps"] == round(statistics.median(
                   [5430, 5460, 5490, 5520, 5550]), 3))

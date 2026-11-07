@@ -139,6 +139,12 @@ MAX_CONSECUTIVE_INVALID = 2
 # V1 limit (spec 05.7): error + timeout rate per run.
 MAX_ERROR_RATE_PCT = 2.0
 
+# Core metrics of a primary-harness record. If extraction does not
+# produce them, the pass is INVALID, never a usable result (review
+# defect 3). error_rate_pct comes from the request counts, so its
+# absence also means V1 cannot run.
+REQUIRED_PRIMARY_METRICS = ("output_throughput_mean", "error_rate_pct")
+
 # V5 limit (spec 05.7): power trace coverage of the run window.
 MIN_POWER_COVERAGE_PCT = 90.0
 
@@ -802,6 +808,14 @@ def run_measured(cfg: dict, point: dict, corpus: str, run_dir: str,
         record["metrics"] = metrics
         return record
 
+    # Extraction failed (for example: the harness output schema
+    # changed and nothing parsed). A measured pass without core
+    # metrics is INVALID, never a usable result (review defect 3).
+    # Cross-check rows carry no validity level, so they are exempt.
+    if harness == PRIMARY_HARNESS \
+            and any(m not in metrics for m in REQUIRED_PRIMARY_METRICS):
+        record["flags"] += ["INVALID", "MISSING-METRICS"]
+
     # Telemetry join (M12 to M16) and V5 coverage check. The GPU
     # temperature at the start and end of the pass is recorded for
     # the thermal-soak audit (spec 05.3 step 6).
@@ -1244,6 +1258,15 @@ def selftest() -> int:
     check("reference run_id does not collide with the test point",
           tp_rec["run_id"] != ref_rec["run_id"]
           and ref_rec["run_id"].endswith("-REF-start"))
+
+    # A failed extraction (for example: harness output schema drift)
+    # must lack the core metrics, which makes the pass INVALID
+    # (review defect 3).
+    with _tempfile.TemporaryDirectory() as tmp:
+        empty_metrics = extract_guidellm_metrics(tmp)
+    check("empty extraction lacks the core metrics (INVALID path)",
+          any(m not in empty_metrics
+              for m in REQUIRED_PRIMARY_METRICS))
 
     check("valid manifest passes", validate_manifest(good) == [])
     bad = {k: v for k, v in good.items()}
