@@ -50,9 +50,17 @@ Fix these settings for the primary harness:
 | Request distribution | Closed-loop: constant concurrency. Open-loop: the OPEN lane below. |
 | Concurrency values | 1, 2, 4, 8, 16, 32, 64, 128, 256. |
 | Warmup before measure | 100 requests or 60 s, whichever is longer. |
+| Warmup corpus | A separate warmup file, disjoint from the measured rows (spec 04.5.1). |
+| Warmup output length | Capped at 64 tokens by default (manifest `warmup_max_tokens`). |
 | Timeout per request | 300 s. Production lanes PF-8 and PF-9 use 3 600 s. |
 | Retry on network error | None. Drop the request, count it as a failure. |
 | Random seed | Fixed per campaign, recorded. |
+
+The warmup warms the prefix cache and the engine.
+It must not reuse the measured prompts, or a cache state from the
+warmup changes the measured result.
+The warmup output cap does not change the measured output length:
+the cache warm comes from the prefills.
 
 Open-loop lane (OPEN):
 1. The OPEN lane sends requests at a fixed rate with Poisson arrivals.

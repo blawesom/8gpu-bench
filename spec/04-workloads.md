@@ -338,12 +338,18 @@ K3.1-Pro) may run the production lanes. Mark them T3.
 
 ## 5. Workload validity
 
-1. The first 100 requests of a run are warmup. Discard them.
-   For the production lanes, warm up with at least one full session
-   per concurrent stream, so that the cache is in a steady state.
+1. Warmup is a separate phase before the measured run: 100 requests
+   or 60 s, whichever is longer (spec 03.3). The warmup corpus is a
+   separate file, disjoint from the measured rows, so the warmup
+   never puts the measured prompts into the cache state.
+   For the production lanes, the warmup rows are full sessions
+   (complete history per turn), so the cache is in a steady state.
+   The warmup output length may be capped (default 64 tokens).
 2. A run is complete when 1 000 measured requests finish or 1 800 s
    elapse. For the production lanes, use the request counts of
    rule 2.1.8. The time limit is 7 200 s.
+   The runner enforces the limit; a pass killed at the limit is
+   INVALID with the flag RUN-CAP.
 3. If more than 2% of requests time out or error, the run is invalid.
 4. Re-run an invalid run once. If it fails again, mark INVALID.
 5. A run fails the profile check if the token counts do not meet

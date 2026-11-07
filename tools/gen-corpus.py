@@ -17,6 +17,7 @@ rule 12): real chat text keeps content-dependent behavior realistic.
 
 Corpus output (per profile, per model):
   <out>/<model>/<profile>.jsonl       requests, first line is a _meta record
+  <out>/<model>/<profile>.warmup.jsonl disjoint warmup rows (spec 03.3)
   <out>/<model>/<profile>.meta.json   metadata sidecar with checksums
 
 Usage examples:
@@ -218,43 +219,63 @@ def fit_text(reserve: list, tokenizer, target: int) -> str:
 # ---------------------------------------------------------------------------
 
 
-def build_fixed(spec: dict, stream: TokenStream, tokenizer, rng) -> tuple[list[dict], dict]:
-    """PF-1, PF-2, PF-5: exact ISL from a unique token stream."""
+def build_fixed(spec: dict, stream: TokenStream, tokenizer, rng,
+                extra: int = 0) -> tuple[list[dict], list[dict], dict]:
+    """PF-1, PF-2, PF-5: exact ISL from a unique token stream.
+
+    ``extra`` additional rows come from the same stream, so they are
+    disjoint from the measured rows; the caller splits them off as
+    the warmup corpus (spec 03.3).
+    """
     rows = []
-    for i in range(spec["requests"]):
+    for i in range(spec["requests"] + extra):
         isl = spec["isl"]
         reserve = stream.take(isl + 256)
         prompt = fit_text(reserve, tokenizer, isl)
+        prefix = "r" if i < spec["requests"] else "w"
         rows.append(
-            dict(id=f"r{i:05d}", prompt=prompt,
+            dict(id=f"{prefix}{i:05d}", prompt=prompt,
                  max_tokens=spec["osl"], isl_target=isl)
         )
-    return rows, {}
+    return rows[:spec["requests"]], rows[spec["requests"]:], {}
 
 
-def build_distribution(spec: dict, stream: TokenStream, tokenizer, rng) -> tuple[list[dict], dict]:
-    """PF-4: ISL sampled from a normal distribution, fixed seed."""
+def build_distribution(spec: dict, stream: TokenStream, tokenizer, rng,
+                       extra: int = 0) -> tuple[list[dict], list[dict], dict]:
+    """PF-4: ISL sampled from a normal distribution, fixed seed.
+
+    ``extra`` disjoint warmup rows, as in build_fixed.
+    """
     rows = []
-    for i in range(spec["requests"]):
+    for i in range(spec["requests"] + extra):
         isl = max(spec["isl_min"], int(rng.gauss(spec["isl_mean"], spec["isl_sd"])))
         reserve = stream.take(isl + 256)
         prompt = fit_text(reserve, tokenizer, isl)
+        prefix = "r" if i < spec["requests"] else "w"
         rows.append(
-            dict(id=f"r{i:05d}", prompt=prompt,
+            dict(id=f"{prefix}{i:05d}", prompt=prompt,
                  max_tokens=spec["osl"], isl_target=isl)
         )
-    isls = [r["isl_target"] for r in rows]
+    main = rows[:spec["requests"]]
+    warmup = rows[spec["requests"]:]
+    isls = [r["isl_target"] for r in main]
     stats = dict(
         isl_mean=round(sum(isls) / len(isls), 1),
         isl_min=min(isls),
         isl_max=max(isls),
     )
-    return rows, stats
+    return main, warmup, stats
 
 
-def build_chat(spec: dict, records: list[dict], tokenizer) -> tuple[list[dict], dict]:
-    """PF-3: real first user turns. ISL is empirical, OSL is capped."""
+def build_chat(spec: dict, records: list[dict], tokenizer,
+               extra: int = 0) -> tuple[list[dict], list[dict], dict]:
+    """PF-3: real first user turns. ISL is empirical, OSL is capped.
+
+    ``extra`` consecutive conversations after the measured set become
+    the warmup corpus (disjoint, spec 03.3).
+    """
     rows = []
+    warmup = []
     for rec in records:
         turns = rec.get("turns") or []
         if not turns:
@@ -265,12 +286,18 @@ def build_chat(spec: dict, records: list[dict], tokenizer) -> tuple[list[dict], 
         isl = len(tokenizer.encode(prompt, add_special_tokens=False))
         if isl == 0:
             continue
-        rows.append(
-            dict(id=f"c{len(rows):05d}", prompt=prompt,
-                 max_tokens=spec["osl_cap"], isl_target=isl)
-        )
-        if len(rows) >= spec["requests"]:
-            break
+        if len(rows) < spec["requests"]:
+            rows.append(
+                dict(id=f"c{len(rows):05d}", prompt=prompt,
+                     max_tokens=spec["osl_cap"], isl_target=isl)
+            )
+        else:
+            warmup.append(
+                dict(id=f"w{len(warmup):05d}", prompt=prompt,
+                     max_tokens=spec["osl_cap"], isl_target=isl)
+            )
+            if len(warmup) >= extra:
+                break
     if len(rows) < spec["requests"]:
         raise RuntimeError(
             f"PF-3 needs {spec['requests']} non-empty conversations, "
@@ -283,16 +310,22 @@ def build_chat(spec: dict, records: list[dict], tokenizer) -> tuple[list[dict], 
         isl_p90=isls[int(len(isls) * 0.9)],
         osl_cap=spec["osl_cap"],
     )
-    return rows, stats
+    return rows, warmup, stats
 
 
 def build_sessions(spec: dict, book_stream: TokenStream, chat_stream: TokenStream,
-                   tokenizer, rng) -> tuple[list[dict], dict]:
+                   tokenizer, rng, extra_sessions: int = 0) -> \
+        tuple[list[dict], list[dict], dict]:
     """PF-7 to PF-9: session model per spec 04.2.2 rules 8 to 11.
 
     Turn t prompt = history (book tokens, growing) + new turn text
     (chat tokens). The history fraction grows from 0.80 to 0.97
     across T turns. The expected token-level cache hit follows.
+
+    ``extra_sessions`` full sessions after the measured set become
+    the warmup corpus (disjoint, spec 03.3): full session prompts so
+    the cache is in a steady state before the first measured turn.
+    The expected hit rate is computed over the measured set only.
     """
     turns = spec["turns"]
     isl = spec["isl"]
@@ -304,7 +337,8 @@ def build_sessions(spec: dict, book_stream: TokenStream, chat_stream: TokenStrea
     ]
     rows = []
     hit_tokens = 0
-    for s in range(spec["sessions"]):
+    main_sessions = spec["sessions"]
+    for s in range(main_sessions + extra_sessions):
         book_reserve = book_stream.take(int(isl * 1.02) + 256)
         for t in range(turns):
             history = int(isl * fractions[t])
@@ -312,20 +346,23 @@ def build_sessions(spec: dict, book_stream: TokenStream, chat_stream: TokenStrea
             turn_ids = chat_stream.take(new_len)
             combined = book_reserve[:history] + turn_ids
             prompt = fit_text(combined, tokenizer, isl)
+            prefix = "s" if s < main_sessions else "w"
             rows.append(
-                dict(id=f"s{s:03d}t{t + 1:02d}", session_id=s, turn=t + 1,
+                dict(id=f"{prefix}{s:03d}t{t + 1:02d}", session_id=s, turn=t + 1,
                      prompt=prompt, max_tokens=osl, isl_target=isl)
             )
-            if t > 0:
+            if t > 0 and s < main_sessions:
                 hit_tokens += int(isl * fractions[t - 1])
-    expected_hit = round(hit_tokens / (len(rows) * isl), 4)
+    main_rows = rows[:main_sessions * turns]
+    warmup_rows = rows[main_sessions * turns:]
+    expected_hit = round(hit_tokens / (len(main_rows) * isl), 4)
     stats = dict(
-        sessions=spec["sessions"], turns_per_session=turns,
+        sessions=main_sessions, turns_per_session=turns,
         expected_cache_hit=expected_hit,
         history_fraction_first=HISTORY_FRACTION_FIRST,
         history_fraction_last=HISTORY_FRACTION_LAST,
     )
-    return rows, stats
+    return main_rows, warmup_rows, stats
 
 
 # ---------------------------------------------------------------------------
@@ -333,23 +370,37 @@ def build_sessions(spec: dict, book_stream: TokenStream, chat_stream: TokenStrea
 # ---------------------------------------------------------------------------
 
 
-def write_corpus(out_dir: str, profile: str, rows: list[dict], meta: dict) -> tuple[str, str]:
+def write_corpus(out_dir: str, profile: str, rows: list[dict], meta: dict,
+                 warmup_rows: list[dict] | None = None) -> tuple[str, str, str]:
+    """Write the measured corpus, its warmup corpus (spec 03.3) and
+    the metadata sidecar. The warmup file is disjoint from the
+    measured rows, so the warmup never puts the measured prompts
+    into the server's cache state."""
+    warmup_rows = warmup_rows or []
     os.makedirs(out_dir, exist_ok=True)
     corpus_path = os.path.join(out_dir, f"{profile}.jsonl")
+    warmup_path = os.path.join(out_dir, f"{profile}.warmup.jsonl")
     meta_path = os.path.join(out_dir, f"{profile}.meta.json")
 
-    meta_record = dict(_meta=True, **{k: v for k, v in meta.items() if k != "corpus_sha256"})
+    skip = {"corpus_sha256", "warmup_corpus_sha256", "n_requests",
+            "n_warmup_requests"}
+    meta_record = dict(_meta=True,
+                       **{k: v for k, v in meta.items() if k not in skip})
     with open(corpus_path, "w", encoding="utf-8") as fh:
         fh.write(json.dumps(meta_record, ensure_ascii=False) + "\n")
         for row in rows:
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
-    corpus_sha = sha256_file(corpus_path)
-    meta["corpus_sha256"] = corpus_sha
+    with open(warmup_path, "w", encoding="utf-8") as fh:
+        for row in warmup_rows:
+            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+    meta["corpus_sha256"] = sha256_file(corpus_path)
+    meta["warmup_corpus_sha256"] = sha256_file(warmup_path)
     meta["n_requests"] = len(rows)
+    meta["n_warmup_requests"] = len(warmup_rows)
     with open(meta_path, "w", encoding="utf-8") as fh:
         json.dump(meta, fh, indent=2, ensure_ascii=False)
         fh.write("\n")
-    return corpus_path, meta_path
+    return corpus_path, meta_path, warmup_path
 
 
 def cmd_generate(args) -> int:
@@ -364,23 +415,30 @@ def cmd_generate(args) -> int:
     if not turn_texts:
         raise SystemExit("wildchat.jsonl has no turns")
 
+    # Warmup corpus (spec 03.3): disjoint rows, full sessions for the
+    # session profiles. The runner caps the warmup output length.
     if spec["kind"] == "chat":
-        rows, stats = build_chat(spec, wildchat, tokenizer)
+        rows, warmup_rows, stats = build_chat(spec, wildchat, tokenizer,
+                                              extra=args.warmup_requests)
     elif spec["kind"] == "session":
         pg19 = read_jsonl(os.path.join(args.sources_dir, "pg19.jsonl"))
         book_stream = TokenStream((r["text"] for r in pg19), tokenizer)
         chat_stream = TokenStream(turn_texts, tokenizer)
-        rows, stats = build_sessions(spec, book_stream, chat_stream,
-                                      tokenizer, rng)
+        extra_sessions = max(1, args.warmup_requests // spec["turns"])
+        rows, warmup_rows, stats = build_sessions(spec, book_stream,
+                                                   chat_stream, tokenizer, rng,
+                                                   extra_sessions=extra_sessions)
     else:
         # PF-1 to PF-5: prompt text from WildChat turns
         # (spec 04.2.2 rule 12). Real chat text keeps content-dependent
         # behavior (speculative-decoding acceptance, EOS) realistic.
         stream = TokenStream(turn_texts, tokenizer)
         if spec["kind"] == "dist":
-            rows, stats = build_distribution(spec, stream, tokenizer, rng)
+            rows, warmup_rows, stats = build_distribution(
+                spec, stream, tokenizer, rng, extra=args.warmup_requests)
         else:
-            rows, stats = build_fixed(spec, stream, tokenizer, rng)
+            rows, warmup_rows, stats = build_fixed(
+                spec, stream, tokenizer, rng, extra=args.warmup_requests)
 
     used_sources = sorted(
         {"wildchat"} | ({"pg19"} if spec["kind"] == "session" else set()))
@@ -409,8 +467,11 @@ def cmd_generate(args) -> int:
         sources=[s for s in source_meta if s["name"] in used_sources],
         attribution=[ATTRIBUTION[name] for name in used_sources],
     )
-    corpus_path, meta_path = write_corpus(out_dir, args.profile, rows, meta)
+    corpus_path, meta_path, warmup_path = write_corpus(
+        out_dir, args.profile, rows, meta, warmup_rows)
     print(f"wrote {corpus_path} ({len(rows)} requests)")
+    print(f"wrote {warmup_path} ({len(warmup_rows)} warmup requests, "
+          f"disjoint from the measured rows)")
     print(f"wrote {meta_path}")
     if "expected_cache_hit" in stats:
         print(f"expected cache hit: {stats['expected_cache_hit']:.1%}")
@@ -548,17 +609,28 @@ def cmd_selftest(args) -> int:
     for profile, base_spec in PROFILES.items():
         spec = scaled(profile, base_spec)
         if spec["kind"] == "chat":
-            rows, stats = build_chat(spec, wildchat, tok)
+            rows, warmup_rows, stats = build_chat(spec, wildchat, tok, extra=5)
         elif spec["kind"] == "session":
             book = TokenStream((r["text"] for r in pg19), tok)
             chat = TokenStream(turn_texts, tok)
-            rows, stats = build_sessions(spec, book, chat, tok, rng)
+            rows, warmup_rows, stats = build_sessions(spec, book, chat, tok,
+                                                      rng, extra_sessions=1)
         elif spec["kind"] == "dist":
             stream = TokenStream(turn_texts, tok)
-            rows, stats = build_distribution(spec, stream, tok, rng)
+            rows, warmup_rows, stats = build_distribution(spec, stream,
+                                                          tok, rng, extra=5)
         else:
             stream = TokenStream(turn_texts, tok)
-            rows, stats = build_fixed(spec, stream, tok, rng)
+            rows, warmup_rows, stats = build_fixed(spec, stream, tok, rng,
+                                                   extra=5)
+
+        # Check 0: the warmup corpus is non-empty and disjoint from
+        # the measured rows (spec 03.3, review defect 7).
+        if not warmup_rows:
+            failures.append(f"{profile}: no warmup rows")
+        main_prompts = set(r["prompt"] for r in rows)
+        if any(r["prompt"] in main_prompts for r in warmup_rows):
+            failures.append(f"{profile}: warmup rows overlap the measured rows")
 
         # Check 1: exact ISL on controlled profiles.
         if spec["kind"] != "chat":
@@ -603,20 +675,28 @@ def cmd_selftest(args) -> int:
                 failures.append(f"{profile} {r['id']}: bad max_tokens")
                 break
 
-        # Check 5: write and read back.
+        # Check 5: write and read back, including the warmup file.
         with tempfile.TemporaryDirectory() as tmp:
             meta = dict(tool_version=TOOL_VERSION, profile=profile,
                         kind=spec["kind"], model="mock", seed=42,
                         stats=stats, sources=[], attribution=[])
-            cpath, mpath = write_corpus(tmp, profile, rows, meta)
-            if not os.path.exists(cpath) or not os.path.exists(mpath):
+            cpath, mpath, wpath = write_corpus(tmp, profile, rows, meta,
+                                               warmup_rows)
+            if not (os.path.exists(cpath) and os.path.exists(mpath)
+                    and os.path.exists(wpath)):
                 failures.append(f"{profile}: output files missing")
                 continue
             back = read_jsonl(cpath)
             if len(back) != len(rows) + 1:  # +1 for the _meta header line
                 failures.append(f"{profile}: readback count mismatch")
-            if json.load(open(mpath))["corpus_sha256"] != sha256_file(cpath):
+            wback = read_jsonl(wpath)
+            if len(wback) != len(warmup_rows):
+                failures.append(f"{profile}: warmup readback count mismatch")
+            meta_disk = json.load(open(mpath))
+            if meta_disk["corpus_sha256"] != sha256_file(cpath):
                 failures.append(f"{profile}: checksum mismatch")
+            if meta_disk["warmup_corpus_sha256"] != sha256_file(wpath):
+                failures.append(f"{profile}: warmup checksum mismatch")
 
     if failures:
         print("SELFTEST FAILED")
@@ -662,6 +742,10 @@ def main() -> int:
     p.add_argument("--sources-dir", default="sources")
     p.add_argument("--out-dir", default="corpora")
     p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--warmup-requests", type=int, default=100,
+                   help="size of the disjoint warmup corpus "
+                        "(spec 03.3; session profiles round up to "
+                        "full sessions)")
     p.set_defaults(func=cmd_generate)
 
     p = sub.add_parser("selftest", help="validate the logic with a mock tokenizer")

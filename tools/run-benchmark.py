@@ -132,6 +132,11 @@ DEFAULT_REQUEST_TIMEOUT = 300
 # Warmup: 100 requests or 60 s, whichever is longer (spec 03.3).
 WARMUP_MIN_SECONDS = 60
 WARMUP_CONSECUTIVE_FAILURES = 3
+# The warmup warms the prefix cache and the engine; it does not need
+# full-length decodes. Capping the warmup output length keeps the
+# production lanes from paying for 50k-token decodes in warmup
+# (review defect 7).
+DEFAULT_WARMUP_MAX_TOKENS = 64
 
 # Consecutive INVALID results that stop the campaign (spec 05.7).
 MAX_CONSECUTIVE_INVALID = 2
@@ -718,13 +723,16 @@ def count_thermal_events(log_text: str) -> int:
 
 
 def warmup(url: str, model: str, rows: list[dict], target: int,
-           timeout_s: int) -> tuple[bool, int]:
+           timeout_s: int,
+           max_tokens_cap: int | None = None) -> tuple[bool, int]:
     """Sequential warmup. Aborts the test point on repeated failures.
 
     Runs until both the request target and the 60 s minimum are met
-    (spec 03.3: 100 requests or 60 s, whichever is longer). The corpus
-    cycles: warmup prompts may repeat, only measured runs need unique
-    prompts.
+    (spec 03.3: 100 requests or 60 s, whichever is longer). The rows
+    must come from the warmup corpus, which is disjoint from the
+    measured rows (spec 03.3). The output length is capped at
+    ``max_tokens_cap`` when given: the cache warm comes from the
+    prefills, not from decoding 50k tokens per warmup request.
     """
     started = time.time()
     done = 0
@@ -737,7 +745,10 @@ def warmup(url: str, model: str, rows: list[dict], target: int,
             return False, 0
         row = rows[index % len(rows)]
         index += 1
-        if post_completion(url, model, row["prompt"], row["max_tokens"],
+        max_tokens = row["max_tokens"]
+        if max_tokens_cap is not None:
+            max_tokens = min(max_tokens, max_tokens_cap)
+        if post_completion(url, model, row["prompt"], max_tokens,
                            timeout_s):
             done += 1
             consecutive_failures = 0
@@ -908,7 +919,19 @@ def sweep_harness(cfg: dict, point: dict, corpus: str, run_dir: str,
     """
     timeout_s = REQUEST_TIMEOUTS.get(point["profile"], DEFAULT_REQUEST_TIMEOUT)
     warm_target = point.get("warmup_requests", 100)
+    warm_cap = point.get("warmup_max_tokens", DEFAULT_WARMUP_MAX_TOKENS)
     corpus_rows = read_corpus_requests(corpus)
+    # Warmup corpus (spec 03.3): disjoint from the measured rows, so
+    # the warmup never puts the measured prompts into the server's
+    # cache state (review defect 7).
+    warmup_corpus = corpus[: -len(".jsonl")] + ".warmup.jsonl" \
+        if corpus.endswith(".jsonl") else corpus + ".warmup.jsonl"
+    if os.path.exists(warmup_corpus):
+        warmup_rows = read_corpus_requests(warmup_corpus)
+    else:
+        # Legacy corpus without a warmup file: best effort, use the
+        # rows the harness constraint leaves unsent.
+        warmup_rows = corpus_rows[point.get("requests", 0):] or corpus_rows
     records: list[dict] = []
 
     for idx, c in enumerate(order if order is not None else values):
@@ -936,7 +959,8 @@ def sweep_harness(cfg: dict, point: dict, corpus: str, run_dir: str,
                     break
                 ok, done = warmup(f"http://localhost:{server.port}",
                                   cfg.get("served_model_name", cfg["model"]),
-                                  corpus_rows, warm_target, timeout_s)
+                                  warmup_rows, warm_target, timeout_s,
+                                  max_tokens_cap=warm_cap)
                 print(f"warmup: {done} requests (target {warm_target})",
                       flush=True)
                 if not ok:

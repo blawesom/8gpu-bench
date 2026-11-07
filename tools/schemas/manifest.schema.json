@@ -82,7 +82,9 @@
           "concurrency": { "type": "array", "items": { "type": "integer" } },
           "rate": { "type": "array", "items": { "type": "number" } },
           "requests": { "type": "integer" },
-          "warmup_requests": { "type": "integer" }
+          "warmup_requests": { "type": "integer" },
+          "warmup_max_tokens": { "type": "integer", "minimum": 1 },
+          "run_cap_s": { "type": "integer", "minimum": 1 }
         }
       }
     }
