@@ -9,6 +9,14 @@ sources/
 corpora/
 results/
 
+# Confidential results store and local setup (spec 07.7):
+# never commit credentials, store URIs, or real-host manifests.
+.s3cfg
+*.s3cmd
+bench.env
+*.vault.yml
+runs/local/
+
 # Ansible
 *.retry
 

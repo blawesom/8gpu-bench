@@ -78,6 +78,22 @@ Adapter status (verified against the upstream docs, Nov 2026):
     format at the version pin (spec 03.5, PLAN item 8).
   GenAI-Perf adapter: uses -m, --tokenizer, --streaming, --input-file.
     PILOT-VERIFY the input-file payload schema at the version pin.
+
+Manifest placeholders (spec 07.7): committed example manifests use
+${VAR} placeholders (for example docker_host: ssh://bench@${SUT1_HOST}).
+load_manifest expands them from the environment and aborts on unset
+variables, so real hostnames never enter the repository. Real values
+belong in the environment or in runs/local/ (gitignored).
+
+Confidential results store (spec 07.7): the repository holds the setup
+only; run results never enter it. When BENCH_S3_URI is set (for example
+s3://<bucket>/8gpu-bench), the campaign directory is
+checkpoint-synced to the store through tools/s3sync.sh (s3cmd) after
+every test-point repetition and at exit. The store credentials live in
+~/.s3cmd on the client (Ansible s3-store role, prompted at setup),
+never in the repository. --out defaults to
+$BENCH_STAGING_DIR/<campaign_id> and --corpora to $BENCH_CORPORA_DIR.
+Without BENCH_S3_URI the runner is local-only (development mode).
 """
 
 from __future__ import annotations
@@ -88,14 +104,16 @@ import datetime
 import json
 import os
 import random
+import re
 import shlex
+import shutil
 import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
 
-TOOL_VERSION = "1.3.0"
+TOOL_VERSION = "1.4.0"
 
 # Thermal soak (spec 05.3 step 6): 60 s after the warmup, 15 s
 # between measured passes.
@@ -119,8 +137,8 @@ def load_versions() -> dict:
     """Read the VERSION file next to the repository root (spec 00.3.5)."""
     versions = {
         "benchmark_spec": "1.1.1",
-        "runner_version": "1.3.0",
-        "assembler_version": "1.3.0",
+        "runner_version": "1.4.0",
+        "assembler_version": "1.4.0",
         "corpus_version": "1.1.0",
         "result_schema_version": "1.1.0",
     }
@@ -285,6 +303,70 @@ def parse_iso8601(value: str) -> float | None:
         return dt.timestamp()
     except ValueError:
         return None
+
+
+# ---------------------------------------------------------------------------
+# Confidential results store (spec 07.7)
+# ---------------------------------------------------------------------------
+
+
+def s3_uri() -> str:
+    """The store prefix, or "" in local-only mode."""
+    return os.environ.get("BENCH_S3_URI", "").strip()
+
+
+def s3sync_command(local_dir: str, suffix: str = "",
+                   dry_run: bool = False) -> list[str]:
+    """The s3sync.sh call for one local directory (spec 07.7)."""
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          "s3sync.sh")
+    cmd = ["bash", script]
+    if dry_run:
+        cmd.append("--dry-run")
+    cmd.append(local_dir)
+    if suffix:
+        cmd.append(suffix)
+    return cmd
+
+
+def sync_campaign(local_dir: str, suffix: str = "",
+                  dry_run: bool = False) -> bool:
+    """Checkpoint-sync one local directory to the S3 store through
+    tools/s3sync.sh. Without BENCH_S3_URI this is a no-op (local-only
+    mode). Returns False when the sync failed; the local copy stays
+    complete either way."""
+    if not s3_uri():
+        return True
+    result = subprocess.run(s3sync_command(local_dir, suffix, dry_run),
+                            capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"S3 sync failed: {shlex.join(result.args)}", file=sys.stderr)
+        print(result.stderr, file=sys.stderr)
+        return False
+    return True
+
+
+def check_s3_store() -> None:
+    """Fail fast in store mode (spec 07.7): with BENCH_S3_URI set, s3cmd
+    must be on PATH, configured, and the store must answer s3cmd ls."""
+    uri = s3_uri()
+    if not uri:
+        print("BENCH_S3_URI is unset: local-only mode, no S3 sync "
+              "(development). Set it (source ~/.bench/bench.env) for a "
+              "confidential campaign store.")
+        return
+    if shutil.which("s3cmd") is None:
+        raise SystemExit(
+            "BENCH_S3_URI is set but s3cmd is not on PATH. Run the "
+            "s3-store Ansible role on the load client first: it prompts "
+            "for the access key and the secret key and writes ~/.s3cmd.")
+    result = subprocess.run(["s3cmd", "ls", uri],
+                            capture_output=True, text=True)
+    if result.returncode != 0:
+        raise SystemExit(
+            f"s3cmd cannot list {uri} with the configured credentials. "
+            "Re-run the s3-store role and enter a valid access key and "
+            "secret key (prompted at setup, never stored in the repo).")
 
 
 # ---------------------------------------------------------------------------
@@ -1204,12 +1286,25 @@ def run_test_point(cfg: dict, point: dict, corpora_root: str, out_root: str,
 
 
 def load_manifest(path: str) -> dict:
+    """Load a run manifest. ${VAR} placeholders expand from the
+    environment (spec 07.7), so committed example manifests never hold
+    real hostnames. An unset variable aborts the run."""
     try:
         import yaml
     except ImportError as exc:
         raise SystemExit("pyyaml is required: pip install pyyaml") from exc
     with open(path, "r", encoding="utf-8") as fh:
-        return yaml.safe_load(fh)
+        text = fh.read()
+    expanded = os.path.expandvars(text)
+    unresolved = sorted(set(re.findall(r"\$\{[A-Za-z_][A-Za-z0-9_]*\}",
+                                       expanded)))
+    if unresolved:
+        raise SystemExit(
+            f"{path}: unset environment variable(s): "
+            f"{', '.join(unresolved)}. Export them before the run "
+            "(for example SUT1_HOST=sut1-h200), or copy the manifest to "
+            "runs/local/ (gitignored) and fill in the real values.")
+    return yaml.safe_load(expanded)
 
 
 def validate_manifest(cfg: dict) -> list[str]:
@@ -1299,7 +1394,8 @@ def lint_manifest(cfg: dict) -> list[str]:
                 f"client target {target} is remote but "
                 "server.docker_host is unset: the server container "
                 "would start on the client, not the SUT (spec 03.2). "
-                "Set server.docker_host (for example ssh://bench@sut1)")
+                "Set server.docker_host (for example "
+                "ssh://bench@${SUT1_HOST})")
     return warnings
 
 
@@ -1328,8 +1424,14 @@ def main() -> int:
     sub.add_parser("selftest", help="validate the scheduling and order "
                      "logic without a server")
     parser.add_argument("--config", default=None, help="run manifest YAML")
-    parser.add_argument("--corpora", default="corpora")
-    parser.add_argument("--out", default="results")
+    parser.add_argument("--corpora",
+                        default=os.environ.get("BENCH_CORPORA_DIR", "corpora"),
+                        help="corpus root (default: $BENCH_CORPORA_DIR or "
+                             "corpora; spec 07.7)")
+    parser.add_argument("--out", default=None,
+                        help="campaign directory (default: "
+                             "$BENCH_STAGING_DIR/<campaign_id>, or "
+                             "results/<campaign_id>; spec 07.7)")
     parser.add_argument("--telemetry", default=None,
                         help="SUT telemetry directory (gpu-telemetry CSVs). "
                              "Copies the run window to power.csv and "
@@ -1361,6 +1463,14 @@ def main() -> int:
         return 2
     for warning in lint_manifest(cfg):
         print(f"manifest warning: {warning}", file=sys.stderr)
+
+    # Confidential store (spec 07.7): fail fast when BENCH_S3_URI is
+    # set but the client cannot reach the store.
+    check_s3_store()
+
+    campaign_id = str(cfg.get("campaign_id", "campaign"))
+    staging = os.environ.get("BENCH_STAGING_DIR", "results")
+    out_root = args.out or os.path.join(staging, campaign_id)
     repetitions = args.repetitions or cfg.get(
         "repetitions", DEFAULT_REPETITIONS)
 
@@ -1369,11 +1479,20 @@ def main() -> int:
                           cfg.get("reference_every", DEFAULT_REFERENCE_EVERY))
     consecutive_invalid = 0
     total = 0
+    sync_ok = True
+
+    def checkpoint() -> None:
+        # Spec 07.7: checkpoint-sync the campaign directory after every
+        # test-point repetition and at exit. A failed sync never loses
+        # data: the staging copy stays complete.
+        nonlocal sync_ok
+        if not sync_campaign(out_root, campaign_id):
+            sync_ok = False
 
     def emit(records: list[dict]) -> int:
         nonlocal consecutive_invalid, total
         for record in records:
-            append_record(args.out, record)
+            append_record(out_root, record)
             total += 1
             if "INVALID" in record["flags"]:
                 consecutive_invalid += 1
@@ -1390,21 +1509,32 @@ def main() -> int:
                 consecutive_invalid = 0
         return 0
 
-    for step, index in steps:
-        if step == "reference":
-            if emit(run_reference(cfg, args.corpora, args.out,
-                                  args.telemetry, index)) == 1:
-                return 2
-            continue
-        point = cfg["test_points"][index - 1]
-        for repetition in range(1, repetitions + 1):
-            records = run_test_point(cfg, point, args.corpora, args.out,
-                                     args.harness, repetition,
-                                     args.telemetry, args.cross_check)
-            if emit(records) == 1:
-                return 2
+    try:
+        for step, index in steps:
+            if step == "reference":
+                if emit(run_reference(cfg, args.corpora, out_root,
+                                      args.telemetry, index)) == 1:
+                    return 2
+                checkpoint()
+                continue
+            point = cfg["test_points"][index - 1]
+            for repetition in range(1, repetitions + 1):
+                records = run_test_point(cfg, point, args.corpora, out_root,
+                                         args.harness, repetition,
+                                         args.telemetry, args.cross_check)
+                if emit(records) == 1:
+                    return 2
+                checkpoint()
+    finally:
+        checkpoint()
 
-    print(f"wrote {total} run records to {args.out}/runs.jsonl")
+    print(f"wrote {total} run records to {out_root}/runs.jsonl")
+    if not sync_ok:
+        print(f"S3 sync failed at least once. The staging copy is "
+              f"complete: {out_root}. Fix the store access and re-sync "
+              f"with: tools/s3sync.sh {out_root} {campaign_id}",
+              file=sys.stderr)
+        return 3
     return 0
 
 
@@ -1542,6 +1672,83 @@ def selftest() -> int:
     placed["server"]["docker_host"] = "ssh://bench@sut1"
     check("lint is silent with docker_host set",
           not any("docker_host" in w for w in lint_manifest(placed)))
+
+    # Manifest placeholders (spec 07.7): ${VAR} expands from the
+    # environment; an unset variable aborts the load.
+    with _tempfile.TemporaryDirectory() as tmp:
+        mpath = os.path.join(tmp, "m.yaml")
+        with open(mpath, "w", encoding="utf-8") as fh:
+            fh.write('client:\n  target: "http://${TEST_SUT_HOST}:8000"\n')
+        os.environ["TEST_SUT_HOST"] = "sut9-example.invalid"
+        try:
+            mcfg = load_manifest(mpath)
+            check("manifest expands ${VAR} from the environment",
+                  mcfg["client"]["target"] == "http://sut9-example.invalid:8000")
+            del os.environ["TEST_SUT_HOST"]
+            try:
+                load_manifest(mpath)
+                check("unset ${VAR} aborts the manifest load", False)
+            except SystemExit:
+                check("unset ${VAR} aborts the manifest load", True)
+        finally:
+            os.environ.pop("TEST_SUT_HOST", None)
+
+    # Confidential store (spec 07.7): with BENCH_S3_URI set the runner
+    # fails fast when s3cmd is missing, and checkpoint syncs go through
+    # tools/s3sync.sh. A fake s3cmd on PATH records the calls; the
+    # selftest never needs real credentials.
+    cmd0 = s3sync_command("/tmp/camp", "2026Q4")
+    check("s3sync command targets tools/s3sync.sh with the campaign suffix",
+          cmd0[1].endswith("s3sync.sh") and cmd0[2] == "/tmp/camp"
+          and cmd0[3] == "2026Q4")
+    with _tempfile.TemporaryDirectory() as tmp:
+        bindir = os.path.join(tmp, "bin")
+        os.makedirs(bindir)
+        log = os.path.join(tmp, "s3cmd.log")
+        with open(os.path.join(bindir, "s3cmd"), "w", encoding="utf-8") as fh:
+            fh.write('#!/bin/sh\necho "$@" >> "%s"\nexit 0\n' % log)
+        os.chmod(os.path.join(bindir, "s3cmd"), 0o755)
+        old_path = os.environ.get("PATH", "")
+        old_uri = os.environ.get("BENCH_S3_URI")
+        os.environ["PATH"] = bindir + os.pathsep + old_path
+        os.environ["BENCH_S3_URI"] = "s3://<bucket>/8gpu-bench"
+        try:
+            check_s3_store()
+            check("store mode passes with a working s3cmd", True)
+            with open(log, encoding="utf-8") as fh:
+                check("fail-fast check lists the store URI",
+                      fh.read().strip() == "ls s3://<bucket>/8gpu-bench")
+            camp = os.path.join(tmp, "2026Q4")
+            os.makedirs(camp)
+            ok = sync_campaign(camp, "2026Q4")
+            with open(log, encoding="utf-8") as fh:
+                lines = fh.read().splitlines()
+            check("checkpoint sync uploads the campaign prefix",
+                  ok and any(l.startswith("sync ") and l.endswith(
+                      "s3://<bucket>/8gpu-bench/2026Q4/")
+                      for l in lines))
+            os.environ["PATH"] = tmp  # no s3cmd here
+            try:
+                check_s3_store()
+                check("store mode fails without s3cmd on PATH", False)
+            except SystemExit:
+                check("store mode fails without s3cmd on PATH", True)
+        finally:
+            os.environ["PATH"] = old_path
+            if old_uri is None:
+                os.environ.pop("BENCH_S3_URI", None)
+            else:
+                os.environ["BENCH_S3_URI"] = old_uri
+    # Local-only mode: no BENCH_S3_URI, no fail-fast, sync is a no-op.
+    old_uri = os.environ.pop("BENCH_S3_URI", None)
+    try:
+        check_s3_store()
+        check("local-only mode without BENCH_S3_URI passes", True)
+        check("sync is a no-op without BENCH_S3_URI",
+              sync_campaign("/tmp/whatever", "2026Q4"))
+    finally:
+        if old_uri is not None:
+            os.environ["BENCH_S3_URI"] = old_uri
 
     if failures:
         print(f"selftest FAILED: {len(failures)} checks")

@@ -95,6 +95,16 @@ tokens, so every selected model runs every lane natively.
 | [spec/06-metrics.md](spec/06-metrics.md) | Metrics M1 to M24. |
 | [spec/07-reporting-format.md](spec/07-reporting-format.md) | Result store, tables, environment records. |
 
+## Results store
+
+This repository holds the setup only. Run results are confidential
+and never enter this checkout: the runner checkpoint-syncs the
+campaign directory to a private S3-compatible store through
+`tools/s3sync.sh` (s3cmd; credentials are prompted at setup by the
+Ansible `s3-store` role and stay on the load client). See
+[spec/07-reporting-format.md](spec/07-reporting-format.md) section 7
+and [infra/ansible/README.md](infra/ansible/README.md).
+
 ## Status and next steps
 
 - Phase 0 (research): done.
@@ -120,6 +130,15 @@ through Docker over SSH; power and energy are computed over the GPU
 set; the CFG-BASE server flags of spec 02.4 are pinned in the
 manifests (and linted); the warmup uses a disjoint corpus with a
 capped output length; the run cap of spec 04.5 is enforced.
+Tooling 1.4.0 (November 2026): the repository now holds the setup
+only. Run results are confidential and sync to a private
+S3-compatible store through `tools/s3sync.sh` (s3cmd; the Ansible
+`s3-store` role prompts for the key pair at setup). Example manifests
+use environment placeholders; the CI hygiene job fails on committed
+secrets, private addresses, or store URIs. No measurement rule
+changed, so `benchmark_spec` stays 1.1.1. See
+[spec/07-reporting-format.md](spec/07-reporting-format.md) section 7.
+
 See [PLAN.md](PLAN.md), section 8, for the deferred items.
 
 Open decisions are listed in [PLAN.md](PLAN.md), section 7.

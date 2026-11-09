@@ -15,3 +15,23 @@ smoke_target_url: "http://sut1-h200:8000"
 # changing this variable. Empty disables the mount.
 telemetry_mount_from: "sut1-h200:/var/log/gpu-telemetry"
 telemetry_mount_to: "/mnt/sut1/gpu-telemetry"
+
+# Confidential results store (spec 07.7). The s3-store role prompts
+# for the access key, the secret key, and the store URI at setup; it
+# writes ~/.s3cmd and ~/.bench/bench.env (both mode 0600) on the
+# client. Nothing here is a secret: the bucket name stays out of the
+# repository.
+s3cmd_version: ""        # PIN AT PHASE 2, for example "=2.4.0-1"
+# S3-compatible endpoint of the store. Set per provider. The URI with
+# the bucket name is prompted at setup, not committed.
+s3_host_base: "SET-ME.example-s3-provider.com"
+s3_host_bucket: "%(bucket)s.SET-ME.example-s3-provider.com"
+s3_signature_v2: "False" # set True if the provider requires v2 signatures
+
+# User that runs the benchmark tools on the client.
+bench_user: "bench"
+# Local staging on the client. Campaigns are written here and
+# checkpoint-synced to BENCH_S3_URI (spec 07.1, 07.7). Corpora are
+# generated into BENCH_CORPORA_DIR.
+bench_staging_dir: "/data/bench-staging"
+bench_corpora_dir: "/data/bench-corpora"

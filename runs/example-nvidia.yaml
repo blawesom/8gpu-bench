@@ -2,6 +2,13 @@
 # Copy to runs/<sut>-<stack>.yaml and adjust. The runner records the
 # resolved image digest at run time (spec 07.4). Pin image tags by
 # digest for the campaign (spec 02.2).
+#
+# Host values are environment placeholders (spec 07.7): the runner
+# expands them and aborts on unset variables, so real hostnames never
+# enter the repository. Before the run:
+#   export SUT1_HOST=sut1-h200
+# Real values that cannot be parameterized go into runs/local/
+# (gitignored).
 
 run_id_prefix: sut1-vllm
 campaign_id: 2026Q4
@@ -39,8 +46,9 @@ server:
   mounts:
     - /opt/models:/models:ro
   # Placement (spec 03.2): the runner runs on the client and controls
-  # the SUT container through Docker over SSH.
-  docker_host: ssh://bench@sut1
+  # the SUT container through Docker over SSH (spec 07.7: the host
+  # comes from the environment).
+  docker_host: ssh://bench@${SUT1_HOST}
   # NVIDIA: --gpus. Omit for AMD and Intel.
   # Tier 1 is TP=1: pin the container to one GPU.
   gpus: device=0
@@ -60,7 +68,7 @@ server:
     --no-enable-prefix-caching
 
 client:
-  target: http://sut1:8000      # dedicated client machine (spec 03.2)
+  target: http://${SUT1_HOST}:8000   # dedicated client machine (spec 03.2)
   guidellm: /opt/8gpu-bench/harness/venv/bin/guidellm
   genai_perf: /opt/8gpu-bench/harness/venv/bin/genai-perf
 

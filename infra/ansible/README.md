@@ -20,6 +20,7 @@ roles/telemetry/            1 Hz power/thermal sampler, NFS export
 roles/env-record/           Emits node-meta.json (spec 07.4)
 roles/smoke/                Smoke test (spec 03.4)
 roles/client-harness/       GuideLLM + GenAI-Perf, telemetry mount
+roles/s3-store/             s3cmd + store credentials (spec 07.7)
 playbooks/site.yml          Full bring-up
 playbooks/verify.yml        Entry criteria (spec 01.3)
 playbooks/record.yml        Refresh the environment record
@@ -80,6 +81,47 @@ and re-run the client role.
   SGLang, or TensorRT-LLM by hand.
 - Write the OS image hash to `/etc/8gpu-bench-image.sha256` after
   image install. The env-record role reads it into `node-meta.json`.
+
+## Confidential results store (s3-store role, spec 07.7)
+
+Run results never enter the git repository. They go to a private
+S3-compatible bucket. The load client is the only machine that talks
+to the store.
+
+1. The endpoint (`s3_host_base`, `s3_host_bucket`,
+   `s3_signature_v2`) and the paths (`bench_staging_dir`,
+   `bench_corpora_dir`) are set in `group_vars/client.yml`. These are
+   not secrets.
+2. `site.yml` prompts for the access key, the secret key, and the
+   store prefix (`bench_s3_uri`) on the client play. Input is private:
+   never echoed, never logged, never committed.
+3. The `s3-store` role installs pinned s3cmd and writes, for the
+   `bench` user only: `~/.s3cmd` (mode 0600) and
+   `~/.bench/bench.env` (mode 0600) with `BENCH_S3_URI`,
+   `BENCH_STAGING_DIR`, and `BENCH_CORPORA_DIR`.
+4. `verify.yml` fails unless `s3cmd ls "$BENCH_S3_URI"` succeeds on
+   the client with those credentials. A setup without a working key
+   pair therefore never enters a campaign.
+5. Before a campaign on the client:
+
+   ```
+   sudo -u bench bash -c 'source ~/.bench/bench.env; \
+       export SUT1_HOST=sut1-h200; \
+       python3 tools/run-benchmark.py --config runs/example-nvidia.yaml'
+   ```
+
+   With `BENCH_S3_URI` set, the runner writes the campaign to
+   `$BENCH_STAGING_DIR/<campaign_id>` and checkpoint-syncs it to
+   `$BENCH_S3_URI/<campaign_id>/` through `tools/s3sync.sh` after
+   every test-point repetition and at exit.
+
+6. Key rotation: create a new key pair in the provider console, re-run
+   `site.yml` on the client, confirm `verify.yml` passes, then
+   deactivate the old pair. The IAM policy of the pair covers only the
+   campaign prefix and requires TLS.
+7. The bucket keeps the 3-year archive (spec 07.5.7) via Object Lock or
+   versioning plus a lifecycle transition. Deletion never comes from
+   the runner: `s3sync.sh` never passes a delete flag.
 
 ## Pilot-phase notes
 

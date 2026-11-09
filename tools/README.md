@@ -3,6 +3,37 @@
 Phase 2 tooling for the 8gpu-bench specification. Benchmark spec
 1.1.1; the tool versions live in the repository `VERSION` file.
 
+## Confidential results store (spec 07.7)
+
+This repository holds the setup only. Run results are confidential
+and never enter this checkout; they go to a private S3-compatible
+bucket:
+
+1. On the load client, run the Ansible `s3-store` role (part of
+   `playbooks/site.yml`). It prompts for the S3 access key, the
+   secret key, and the store prefix, and writes `~/.s3cmd` and
+   `~/.bench/bench.env` (both mode 0600). Nothing is committed.
+2. Before a campaign, source the environment and set the SUT host:
+
+   ```
+   source ~/.bench/bench.env
+   export SUT1_HOST=sut1-h200
+   ```
+
+3. Run the tools. With `BENCH_S3_URI` set, `--out` defaults to
+   `$BENCH_STAGING_DIR/<campaign_id>` and `--corpora` to
+   `$BENCH_CORPORA_DIR` (gen-corpus honors the same variable). The
+   campaign directory is checkpoint-synced to
+   `$BENCH_S3_URI/<campaign_id>/` through `s3sync.sh` after every
+   test-point repetition and at exit. Without `BENCH_S3_URI`
+   everything stays local (development mode).
+
+Example manifests use environment placeholders (for example
+`docker_host: ssh://bench@${SUT1_HOST}`). The runner expands them and
+aborts on unset variables, so real hostnames never enter the repo.
+Real values that cannot be parameterized go into `runs/local/`
+(gitignored).
+
 ## gen-corpus.py — corpus generator (spec 04)
 
 Builds the payload profile corpora. One corpus per profile, per model
@@ -49,10 +80,22 @@ The warmup uses the separate warmup corpus
 from the measured rows, and caps the warmup output length
 (`warmup_max_tokens`, default 64 tokens, spec 03.3).
 
+Development (local only, no S3):
+
 ```
 python3 tools/run-benchmark.py --config runs/example-nvidia.yaml \
     --corpora corpora --out results/2026Q4 \
     --telemetry /mnt/sut1/gpu-telemetry
+```
+
+Production (confidential store; after `source ~/.bench/bench.env` and
+`export SUT1_HOST=...`):
+
+```
+python3 tools/run-benchmark.py --config runs/example-nvidia.yaml \
+    --telemetry /mnt/sut1/gpu-telemetry
+# --out defaults to $BENCH_STAGING_DIR/2026Q4 and syncs to
+# $BENCH_S3_URI/2026Q4/ at every checkpoint (spec 07.7)
 ```
 
 Placement (spec 03.2): the runner runs on the dedicated load
@@ -148,7 +191,21 @@ Reads the `runs.jsonl` records of one campaign and writes
 
 ```
 python3 tools/build-results.py --campaign results/2026Q4
+# With BENCH_S3_URI set, also syncs the campaign directory to
+# $BENCH_S3_URI/2026Q4/ through s3sync.sh (spec 07.7).
 ```
+
+## s3sync.sh — store sync wrapper (spec 07.7)
+
+```
+tools/s3sync.sh [--dry-run] <local-dir> [dest-suffix]
+# syncs <local-dir> to $BENCH_S3_URI/<dest-suffix>/ (default suffix:
+# the directory basename). Never deletes remote objects.
+```
+
+Requires `BENCH_S3_URI` and a configured s3cmd (`~/.s3cmd`, written by
+the s3-store role). The runner and the assembler call it; you can call
+it by hand to re-sync a staging directory after a failed checkpoint.
 
 Checks enforced (spec 05.7):
 - V1 error rate, V3 CoV (5% limit), V9 comparability category.

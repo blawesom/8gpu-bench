@@ -787,7 +787,10 @@ def main() -> int:
     p.add_argument("--mock", action="store_true",
                    help="use the whitespace mock tokenizer (selftest only)")
     p.add_argument("--sources-dir", default="sources")
-    p.add_argument("--out-dir", default="corpora")
+    p.add_argument("--out-dir",
+                   default=os.environ.get("BENCH_CORPORA_DIR", "corpora"),
+                   help="corpus output root (default: $BENCH_CORPORA_DIR "
+                        "or corpora; spec 07.7)")
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--warmup-requests", type=int, default=100,
                    help="size of the disjoint warmup corpus "

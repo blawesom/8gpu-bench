@@ -1,4 +1,6 @@
 # Example run manifest: AMD SUT, vLLM (ROCm build), Tier 1 smoke lane.
+# Host values are environment placeholders (spec 07.7): export
+# SUT4_HOST before the run. Real hostnames never enter the repository.
 # Differences from the NVIDIA example:
 #   - No "gpus" key. Docker's --gpus is an NVIDIA runtime option.
 #   - docker_args passes the ROCm device nodes and groups.
@@ -28,8 +30,8 @@ server:
   shm_size: 64g
   mounts:
     - /opt/models:/models:ro
-  # Placement (spec 03.2): Docker over SSH to the SUT.
-  docker_host: ssh://bench@sut4
+  # Placement (spec 03.2): Docker over SSH to the SUT (spec 07.7).
+  docker_host: ssh://bench@${SUT4_HOST}
   docker_args: >-
     --device /dev/kfd --device /dev/dri --group-add video --ipc=host
   # Tier 1 is TP=1: pin the server to GPU 0, so it matches gpu_ids
@@ -48,7 +50,7 @@ server:
     --no-enable-prefix-caching
 
 client:
-  target: http://sut4:8000
+  target: http://${SUT4_HOST}:8000
   guidellm: /opt/8gpu-bench/harness/venv/bin/guidellm
   genai_perf: /opt/8gpu-bench/harness/venv/bin/genai-perf
 

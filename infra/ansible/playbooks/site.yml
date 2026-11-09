@@ -5,9 +5,23 @@
 - name: Bring up the load client
   hosts: client
   become: true
+  # The store credentials are prompted at setup (spec 07.7). Private
+  # input: never echoed, never logged, never committed. vars_prompt
+  # only runs for this play, so --limit on a SUT skips the prompts.
+  vars_prompt:
+    - name: s3_access_key
+      prompt: "S3 access key for the confidential results store (not stored anywhere in the repo)"
+      private: true
+    - name: s3_secret_key
+      prompt: "S3 secret key for the confidential results store"
+      private: true
+    - name: bench_s3_uri
+      prompt: "Results store prefix (for example s3://<bucket>/8gpu-bench)"
+      private: false
   roles:
     - base
     - client-harness
+    - s3-store
 
 - name: Bring up the SUTs
   hosts: nvidia:amd:intel

@@ -1,0 +1,63 @@
+---
+# Confidential results store on the load client (spec 07.7).
+#
+# Installs s3cmd and writes ~/.s3cmd for the bench user. The access
+# key and the secret key are prompted at setup (vars_prompt in
+# playbooks/site.yml, private input) and are never written to the
+# repository, a log, or a committed file. The store URI likewise goes
+# to the gitignored-pattern env file ~/.bench/bench.env, not to the
+# repo. verify.yml checks that the store answers s3cmd ls.
+
+- name: Create the bench user
+  ansible.builtin.user:
+    name: "{{ bench_user }}"
+    shell: /bin/bash
+    create_home: true
+    state: present
+
+- name: Install s3cmd (pinned when s3cmd_version is set)
+  ansible.builtin.apt:
+    name: "{{ 's3cmd=' ~ s3cmd_version if s3cmd_version | length > 0 else 's3cmd' }}"
+    state: present
+    update_cache: true
+
+- name: Create the bench config directory
+  ansible.builtin.file:
+    path: "/home/{{ bench_user }}/.bench"
+    state: directory
+    owner: "{{ bench_user }}"
+    group: "{{ bench_user }}"
+    mode: "0700"
+
+- name: Write the client environment file (bench.env, mode 0600)
+  ansible.builtin.template:
+    src: bench.env.j2
+    dest: "/home/{{ bench_user }}/.bench/bench.env"
+    owner: "{{ bench_user }}"
+    group: "{{ bench_user }}"
+    mode: "0600"
+  no_log: true
+
+- name: Write the s3cmd config (~/.s3cmd, mode 0600)
+  ansible.builtin.template:
+    src: s3cmd.j2
+    dest: "/home/{{ bench_user }}/.s3cmd"
+    owner: "{{ bench_user }}"
+    group: "{{ bench_user }}"
+    mode: "0600"
+  no_log: true
+
+- name: Verify the store answers with the prompted credentials
+  ansible.builtin.command: s3cmd ls {{ bench_s3_uri }}
+  become: true
+  become_user: "{{ bench_user }}"
+  changed_when: false
+  register: s3_store_check
+  failed_when: s3_store_check.rc != 0
+  no_log: true
+
+- name: Report the store check
+  ansible.builtin.debug:
+    msg: >-
+      Confidential results store reachable at the configured prefix.
+      Credentials stay in ~/.s3cmd (0600) on this client only.

@@ -34,3 +34,31 @@
       when: pilot | default(false)
       ansible.builtin.debug:
         msg: "PILOT PHASE. Results from this SUT carry the PILOT flag (spec 01.3)."
+
+- name: Verify the confidential results store on the client
+  hosts: client
+  become: true
+  tasks:
+    - name: Check that s3cmd reaches the store with the setup credentials
+      ansible.builtin.shell: |
+        set -e
+        . "/home/{{ bench_user }}/.bench/bench.env"
+        s3cmd ls "$BENCH_S3_URI" >/dev/null
+      args:
+        executable: /bin/bash
+      become_user: "{{ bench_user }}"
+      changed_when: false
+      register: s3_store_check
+      failed_when: >-
+        s3_store_check.rc != 0
+      no_log: true
+
+    - name: Assert the store check passed
+      ansible.builtin.assert:
+        that:
+          - s3_store_check.rc == 0
+        fail_msg: >-
+          Entry criteria failed on the client: s3cmd cannot list
+          BENCH_S3_URI with the configured credentials. Re-run
+          playbooks/site.yml and enter a valid access key and secret
+          key (spec 07.7).

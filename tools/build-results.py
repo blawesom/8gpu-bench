@@ -32,6 +32,11 @@ Usage:
   build-results.py --campaign results/2026Q4
   build-results.py --runs results/2026Q4/runs.jsonl --out results/2026Q4/aggregate
   build-results.py selftest
+
+Confidential results store (spec 07.7): with BENCH_S3_URI set,
+--campaign also syncs the campaign directory (runs.jsonl, raw output,
+aggregate/) to $BENCH_S3_URI/<campaign_id>/ through tools/s3sync.sh.
+Without BENCH_S3_URI the assembler is local-only (development mode).
 """
 
 from __future__ import annotations
@@ -44,6 +49,7 @@ import json
 import os
 import random
 import statistics
+import subprocess
 import sys
 import time
 
@@ -130,8 +136,8 @@ def load_versions() -> dict:
     """Read the VERSION file next to the repository root."""
     versions = {
         "benchmark_spec": "1.1.1",
-        "runner_version": "1.3.0",
-        "assembler_version": "1.3.0",
+        "runner_version": "1.4.0",
+        "assembler_version": "1.4.0",
         "corpus_version": "1.1.0",
         "result_schema_version": "1.1.0",
     }
@@ -186,6 +192,34 @@ def bootstrap_ci(values: list[float], seed: int) -> tuple[float, float] | None:
 def stable_seed(campaign_id: str, key: str) -> int:
     digest = hashlib.sha256(f"{campaign_id}:{key}".encode()).hexdigest()
     return int(digest[:12], 16)
+
+
+# ---------------------------------------------------------------------------
+# Confidential results store (spec 07.7)
+# ---------------------------------------------------------------------------
+
+
+def s3_uri() -> str:
+    """The store prefix, or "" in local-only mode."""
+    return os.environ.get("BENCH_S3_URI", "").strip()
+
+
+def sync_to_s3(local_dir: str, suffix: str = "") -> bool:
+    """Sync one local directory to the S3 store through s3sync.sh
+    (spec 07.7). No-op without BENCH_S3_URI (local-only mode)."""
+    if not s3_uri():
+        return True
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          "s3sync.sh")
+    cmd = ["bash", script, local_dir]
+    if suffix:
+        cmd.append(suffix)
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"S3 sync failed: {' '.join(cmd)}", file=sys.stderr)
+        print(result.stderr, file=sys.stderr)
+        return False
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -850,6 +884,16 @@ def main() -> int:
     if args.campaign:
         out_dir = args.out or os.path.join(args.campaign, "aggregate")
         results = assemble(args.campaign, out_dir, versions)
+        # Spec 07.7: in store mode, sync the whole campaign directory
+        # (runs.jsonl, raw output, aggregate/) to the confidential
+        # store. The local staging copy stays complete on failure.
+        campaign_id = os.path.basename(os.path.normpath(args.campaign))
+        if not sync_to_s3(args.campaign, campaign_id):
+            print(f"aggregate written locally to {out_dir}, but the S3 "
+                  f"sync to {s3_uri()}/{campaign_id}/ failed. Re-sync "
+                  f"with: tools/s3sync.sh {args.campaign} {campaign_id}",
+                  file=sys.stderr)
+            return 3
     else:
         patterns = []
         for entry in args.runs:
@@ -1143,6 +1187,36 @@ def selftest() -> int:
               and "REFERENCE-DRIFT" in aggs_b[("SUT-1", 32)]["reasons"])
         check("B: SUT-2 rows stay VALID (per-group drift)",
               aggs_b[("SUT-2", 32)]["validity"] == "VALID")
+
+        # Confidential store (spec 07.7): with BENCH_S3_URI set the
+        # assembler syncs the campaign directory through s3sync.sh.
+        # A fake s3cmd on PATH records the call; the selftest never
+        # needs real credentials.
+        bindir = os.path.join(tmp, "bin-s3")
+        os.makedirs(bindir)
+        log = os.path.join(tmp, "s3cmd-sync.log")
+        with open(os.path.join(bindir, "s3cmd"), "w", encoding="utf-8") as fh:
+            fh.write('#!/bin/sh\necho "$@" >> "%s"\nexit 0\n' % log)
+        os.chmod(os.path.join(bindir, "s3cmd"), 0o755)
+        old_path = os.environ.get("PATH", "")
+        old_uri = os.environ.get("BENCH_S3_URI")
+        os.environ["PATH"] = bindir + os.pathsep + old_path
+        os.environ["BENCH_S3_URI"] = "s3://<bucket>/8gpu-bench"
+        try:
+            ok = sync_to_s3(camp_a, "2026Q4")
+            with open(log, encoding="utf-8") as fh:
+                synced = fh.read()
+            check("C: campaign sync targets the campaign prefix in S3",
+                  ok and synced.startswith("sync ")
+                  and "s3://<bucket>/8gpu-bench/2026Q4/" in synced)
+        finally:
+            os.environ["PATH"] = old_path
+            if old_uri is None:
+                os.environ.pop("BENCH_S3_URI", None)
+            else:
+                os.environ["BENCH_S3_URI"] = old_uri
+        check("C: sync is a no-op without BENCH_S3_URI",
+              sync_to_s3(camp_a, "2026Q4"))
 
     if failures:
         print(f"selftest FAILED: {len(failures)} checks")

@@ -1,0 +1,15 @@
+# 8gpu-bench s3cmd config (spec 07.7). Written by the s3-store role.
+# Mode 0600, never committed. The keys are prompted at setup
+# (vars_prompt in playbooks/site.yml) and never logged.
+[default]
+access_key = {{ s3_access_key }}
+secret_key = {{ s3_secret_key }}
+# S3-compatible endpoint of the confidential store. Set per provider
+# in group_vars/client.yml. Not a secret, but the bucket name stays
+# out of the repository.
+host_base = {{ s3_host_base }}
+host_bucket = {{ s3_host_bucket }}
+use_https = True
+signature_v2 = {{ s3_signature_v2 }}
+# The sync wrapper never deletes remote objects.
+delete_removed = False

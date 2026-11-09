@@ -98,3 +98,14 @@ Use these terms with these meanings in all documents.
   changes in a way that makes new results not comparable with old ones
   (for example: a new validity rule, a changed repetition count).
 - Raise the tool versions when the tools change without a spec change.
+
+### 3.6 Repository hygiene
+
+- The repository holds the setup only: this document set, the tools,
+  the schemas, the Ansible bring-up, the CI, and the example manifests.
+  See spec 07.7 for the full rule set.
+- Never commit run results, environment records, telemetry, raw
+  harness output, server logs, real hostnames, store URIs, or access
+  keys. The CI scans committed files for these patterns.
+- Example manifests use environment placeholders. The runner expands
+  them and aborts when a variable is unset (spec 07.7).

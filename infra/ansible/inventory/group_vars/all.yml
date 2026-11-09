@@ -18,7 +18,7 @@ timezone: "UTC"
 telemetry_interval_seconds: 1
 telemetry_output_dir: "/var/log/gpu-telemetry"
 # Read-only NFS export of the telemetry directory to the client
-# network (spec 03.2). CIDR, for example "10.0.0.0/24". Empty
+# network (spec 03.2). CIDR, for example "192.0.2.0/24" (documentation range; real CIDRs are set locally and never committed, spec 07.7). Empty
 # disables the export.
 telemetry_export_net: ""
 

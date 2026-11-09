@@ -36,6 +36,11 @@ Rules:
    directory. The prefix encodes SUT, stack, version, model, and TP.
 4. Multiple run manifests (SUTs, stacks, lanes) append to the same
    `runs.jsonl` of one campaign.
+5. The campaign directory does not live in the repository. In
+   production it lives in a local staging directory on the load client
+   (`BENCH_STAGING_DIR`, default `results`) and is checkpoint-synced
+   to the confidential S3 store (`BENCH_S3_URI`) through
+   `tools/s3sync.sh`. See section 7.
 
 Run ID format: `SUTx-stack-vvv-mmmm-TPx-PFx-Px-Wx-Cxx-rN`
 Example: `SUT3-vllm-0.32-gpt-oss-120b-TP8-PF1-PU-WON-C128-r2`
@@ -250,3 +255,50 @@ Structure:
 9. State the benchmark versions (section 1.1) in every report.
 10. Cite `validation.json` when a table contains QUALIFIED or
     INVALID rows.
+
+## 7. Repository hygiene and the confidential results store
+
+The repository holds the setup only. Run results are confidential and
+never enter the repository.
+
+1. The repository may contain: this document set, `tools/`,
+   `tools/schemas/`, `infra/`, the CI, the `VERSION` file, the
+   example manifests, and the corpus seeds with their checksums and
+   attribution.
+2. Never commit: `runs.jsonl` or any run record, `meta.json`,
+   `node-meta.json`, telemetry CSVs, raw harness output, server logs,
+   real manifests with hostnames, the store URI, s3cmd credentials,
+   or private addresses. The CI job `hygiene` fails on access-key
+   patterns, private-key blocks, private IPv4 ranges, real ssh
+   targets, and s3cmd credential lines. Use documentation ranges
+   (192.0.2.0/24) in committed examples.
+3. Committed example manifests use environment placeholders, for
+   example `docker_host: ssh://bench@${SUT1_HOST}`. The runner expands
+   them from the environment and aborts when a variable is unset.
+   Real values go into the environment or into `runs/local/`
+   (gitignored).
+4. The results store is a private S3-compatible bucket. The load
+   client reaches it with s3cmd. The Ansible `s3-store` role configures
+   s3cmd: it prompts for the access key and the secret key at setup
+   and writes `~/.s3cmd` with mode 0600. The keys never enter the
+   repository, the logs, or any committed file.
+5. The role also writes `~/.bench/bench.env` (mode 0600) on the
+   client. Source it before the tools:
+   `BENCH_S3_URI` (store prefix), `BENCH_STAGING_DIR` (local staging),
+   `BENCH_CORPORA_DIR` (generated corpora).
+6. `tools/s3sync.sh` syncs one local directory into the store. It
+   never deletes remote objects; deletion belongs to the bucket
+   lifecycle policy. The runner calls it after every test-point
+   repetition and at exit. The assembler calls it once on the whole
+   campaign directory. A crash loses at most one test point of
+   unsynced data; the staging copy stays complete.
+7. Without `BENCH_S3_URI` the tools run local-only (development mode).
+   The runner prints a note and skips every sync.
+8. Access to the bucket is scoped: the IAM policy of the setup key
+   pair covers only the campaign prefix, TLS is required, and the
+   provider access log records every read. Rotate a key pair by
+   creating a new one, re-running the `s3-store` role, and
+   deactivating the old pair.
+9. The 3-year archive rule (section 6, rule 7) applies to the store:
+   Object Lock or versioning plus a lifecycle transition. The archive
+   never lives in the repository.
