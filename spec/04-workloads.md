@@ -69,6 +69,20 @@ Notes:
   as a full campaign lane. It anchors our numbers against published
   MLPerf Inference v6.0 results. Its 131k context window excludes it
   from the production lanes (rule 2.1.7).
+- The model is deliberately older than the lane models. An anchor is
+  only useful while it is frozen: published MLPerf results are
+  comparable across vendors only when model, workload, and rules are
+  identical. Comparability outranks novelty here. New-architecture
+  coverage belongs to the Tier 2 headline (DeepSeek-V4.1-Flash) and
+  the Tier 3 frontier lane (Kimi K3.1-Pro), not to the anchor.
+- GPT-OSS-120B is natively MXFP4. On Blackwell SUTs it exercises the
+  FP4 tensor-core path natively; on Hopper SUTs it exercises the
+  dequant/convert software path.
+- Swap trigger: when MLCommons publishes a release (v7.0 or later)
+  with a new large open-weight LLM, re-run the anchor lane on the new
+  model and update the comparability class. Never mix anchor results
+  across model generations; the one-time re-baseline is inherent to
+  any cross-vendor anchor.
 - DeepSeek-V4.1-Flash at FP8 needs about 600 GB for the weights. It fits SUT-1,
   SUT-2, SUT-4, SUT-5, SUT-6 at FP8. For SUT-3, use the FP4 lane (1.4).
 
